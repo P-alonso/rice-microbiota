@@ -1,0 +1,748 @@
+---
+title: "unnifrac pcoa 20191220"
+author: "pascal"
+date: "4 novembre 2019"
+output: html_document
+---
+
+```{r message=FALSE, warning=FALSE, include=FALSE, paged.print=FALSE}
+library(tidyverse)
+library(phyloseq)
+library(microbiome)
+library(RColorBrewer)
+library(reshape2)
+library(knitr)
+library(ape)
+library(metacoder)
+library(vegan)
+library(agricolae)
+
+setwd("~/cirad/cahier de laboratoire/16s chine/analyses fred/test r studio/r-studio_OTU_table/work")
+input <- "Yunnan_Rice_2016_16S_roots_and_stems_384_samples.OTU.filtered20191220.table"
+metadata <- "metadata.txt"
+dist_rice<- "dist_gbs_riz.out"
+min_sample_size <- 1000
+taxonomic_levels <- c("Kingdom","Phylum", "Class",
+                      "Order", "Family", "Genus", "Species")
+
+
+
+## extract negative and positive control to select cotaminant reads
+read_tsv(input) %>% 
+  filter(! grepl("No_hit", taxonomy)) %>%
+  select(OTU, starts_with("T"),starts_with("t"),  -total, -taxonomy)->contaminants
+
+    # calculate max reads of control samples
+      contaminants %>%
+        gather(key = "samples", value = "reads", -OTU)%>%
+        mutate(samples = str_replace(samples, "^[tT].*", "control")) %>% # rename control samples by control
+        group_by(OTU, samples) %>%
+        summarize(max = max(reads)) %>%
+        select(-samples)->conta_max
+
+
+## OTU Tables remove contaminant reads and Sepya project 
+read_tsv(input) %>% 
+    filter(! grepl("No_hit|Nocardiaceae|Mitochondria|Chloroplast", taxonomy)) %>%
+    select(starts_with("YY"), OTU) %>% 
+    gather("samples", "reads", -OTU) %>%
+    left_join(conta_max, by = "OTU") %>%
+    mutate(reads = case_when(
+               is.na(max)  ~ reads,
+               max > reads ~ as.double(0),
+               TRUE      ~ reads - max)) %>%
+    select(-max) %>%
+    spread(samples, reads, fill = 0) %>%  
+    gather(key = "samples", value = "reads", -OTU) %>%
+        group_by(samples) %>%
+        filter(sum(reads) >= min_sample_size) %>%
+        ungroup() %>%
+        separate(samples, c("samples", "lib_number"), sep = "_") %>%  # 'YYM1-aT_S1' -> 'YYM1-aT' 'S1'
+        separate(samples, c("plots", "replicates"), sep = "-") %>%  # 'YYM1-aT' -> 'YYM1' 'aT' (field name and plant id + compartment)
+        mutate(compartments = str_replace(replicates, "[[:lower:]]", "")) %>%  # 'aT' -> 'T' (compartment)
+        mutate(replicates = str_replace(replicates, "[[:upper:]]", "")) %>%  # 'aT' -> 'a' (plant id)
+        mutate(replicates = str_to_upper(replicates)) %>%
+        unite(plots, compartments, col = "samples", sep = "-") %>%  # 'YYM1' + 'T' -> 'YYM1-T'
+          count(OTU, samples, replicates, wt = reads) %>%  # merge samples with the same names
+        group_by(OTU, samples) %>%
+        mutate(n_replicates = n())  %>%  # calculate the number of plant per field
+        filter(n > 0) %>%  # remove the OTU with 0 read per field
+        mutate(n_occur = n()) %>%  # calculate the number of plant positive  per field for each OTU
+        ungroup()  %>%
+        mutate(ratio= n_occur/n_replicates) %>%  # calculate the prevalence for each OTU in each field 
+        separate(samples, c("plots", "compartments"), sep = "-") %>%  # separate column sample into two columns : field and plant compartment
+        unite(plots, replicates, col = "samples", sep = "-") %>%  # rewrite the initial sample name
+        unite(samples, compartments, col = "samples", sep = "") %>%
+       # unite(samples, lib_number, col = "samples", sep = "_") %>%
+        mutate(removed_otu = replace(n_occur, which(ratio <= 0.5), 0)) %>%  # filter OTU presents in more than 50% of sample at the field level 1/3
+        mutate(removed_otu = replace(removed_otu, which(ratio > 0.5), 1)) %>%  # filter OTU presents in more than 50% of sample at the field level 2/3
+        mutate(reads= removed_otu * n) %>%  # filter OTU presents in more than 50% of sample at the field level 3/3
+        distinct(OTU, samples, reads) %>%  # extract only OTU samples and reads columns
+        group_by(samples) %>%
+        filter(sum(reads) >= min_sample_size)%>%  # some samples are now below our threshold
+        ungroup() %>%
+        group_by(OTU) %>% 
+        filter(sum(reads) >= 1) %>% # remove OTU with 0 reads
+        ungroup() %>%
+        spread(samples, reads) %>%  # redo the otu table after "denoising"
+        replace(is.na(.), 0) %>%  # replace Na by 0
+        rename(OTU_ID = OTU) -> otu_data
+
+###16s tiges
+
+## éliminer les séquences contaminantes : plantes, contaminants et no
+## hit, si besoin ajouter les autres OTU contaminants
+read_tsv(input) %>% 
+    filter(! grepl("No_hit|Nocardiaceae|Mitochondria|Chloroplast", taxonomy)) %>%
+    select(starts_with("YY"), OTU) %>% 
+    gather("samples", "reads", -OTU) %>%
+    left_join(conta_max, by = "OTU") %>%
+    mutate(reads = case_when(
+               is.na(max)  ~ reads,
+               max > reads ~ as.double(0),
+               TRUE      ~ reads - max)) %>%
+    select(-max) %>%
+    spread(samples, reads, fill = 0) %>%
+    gather(key = "samples", value = "reads", -OTU) %>%
+    group_by(samples) %>%
+    filter(sum(reads) >= min_sample_size) %>%
+    ungroup() %>%
+    separate(samples, c("samples", "lib_number"), sep = "_") %>%  # 'YYM1-aT_S1' -> 'YYM1-aT' 'S1'
+    separate(samples, c("plots", "replicates"), sep = "-") %>%  # 'YYM1-aT' -> 'YYM1' 'aT' (field name and plant id + compartment)
+    mutate(compartments = str_replace(replicates, "[[:lower:]]", "")) %>%  # 'aT' -> 'T' (compartment)
+    mutate(replicates = str_replace(replicates, "[[:upper:]]", "")) %>%  # 'aT' -> 'a' (plant id)
+    mutate(replicates = str_to_upper(replicates)) %>%
+    unite(plots, compartments, col = "samples", sep = "-") %>%  # 'YYM1' + 'T' -> 'YYM1-T'
+  filter(str_detect(samples,"T$")) %>% 
+  mutate(samples= str_replace(samples,"T$","")) %>% 
+    count(OTU, samples, replicates, wt = reads) %>%  # merge samples with the same names
+    group_by(OTU, samples) %>%
+    mutate(n_replicates = n())  %>%  # calculate the number of plant per field
+    filter(n > 0) %>%  # remove the OTU with 0 read per field
+    mutate(n_occur = n()) %>%  # calculate the number of plant positive  per field for each OTU
+    ungroup()  %>%
+    mutate(ratio= n_occur/n_replicates) %>%  # calculate the prevalence for each OTU in each field 
+    separate(samples, c("plots", "compartments"), sep = "-") %>%  # separate column sample into two columns : field and plant compartment
+    unite(plots, replicates, col = "samples", sep = "-") %>%  # rewrite the initial sample name
+    unite(samples, compartments, col = "samples", sep = "") %>%
+   # unite(samples, lib_number, col = "samples", sep = "_") %>%
+    mutate(removed_otu = replace(n_occur, which(ratio <= 0.5), 0)) %>%  # filter OTU presents in more than 50% of sample at the field level 1/3
+    mutate(removed_otu = replace(removed_otu, which(ratio > 0.5), 1)) %>%  # filter OTU presents in more than 50% of sample at the field level 2/3
+    mutate(reads= removed_otu * n) %>%  # filter OTU presents in more than 50% of sample at the field level 3/3
+    distinct(OTU, samples, reads) %>%  # extract only OTU samples and reads columns
+    group_by(samples) %>%
+    filter(sum(reads) >= min_sample_size)%>%  # some samples are now below our threshold
+    ungroup() %>%
+    group_by(OTU) %>% 
+    filter(sum(reads) >= 1) %>% # remove OTU with 0 reads
+    ungroup() %>%
+    spread(samples, reads) %>%  # redo the otu table after "denoising"
+    replace(is.na(.), 0) %>%  # replace Na by 0
+    rename(OTU_ID = OTU) -> otu_data_tige
+ 
+
+read_tsv(input) %>% 
+    filter(! grepl("No_hit|Nocardiaceae|Mitochondria|Chloroplast", taxonomy)) %>%
+    select(starts_with("YY"), OTU) %>% 
+    gather("samples", "reads", -OTU) %>%
+    left_join(conta_max, by = "OTU") %>%
+    mutate(reads = case_when(
+               is.na(max)  ~ reads,
+               max > reads ~ as.double(0),
+               TRUE      ~ reads - max)) %>%
+    select(-max) %>%
+    spread(samples, reads, fill = 0) %>%
+    gather(key = "samples", value = "reads", -OTU) %>%
+    group_by(samples) %>%
+    filter(sum(reads) >= min_sample_size) %>%
+    ungroup() %>%
+    separate(samples, c("samples", "lib_number"), sep = "_") %>%  # 'YYM1-aT_S1' -> 'YYM1-aT' 'S1'
+    separate(samples, c("plots", "replicates"), sep = "-") %>%  # 'YYM1-aT' -> 'YYM1' 'aT' (field name and plant id + compartment)
+    mutate(compartments = str_replace(replicates, "[[:lower:]]", "")) %>%  # 'aT' -> 'T' (compartment)
+    mutate(replicates = str_replace(replicates, "[[:upper:]]", "")) %>%  # 'aT' -> 'a' (plant id)
+    mutate(replicates = str_to_upper(replicates)) %>%
+    unite(plots, compartments, col = "samples", sep = "-") %>%  # 'YYM1' + 'T' -> 'YYM1-T'
+  filter(str_detect(samples,"R$")) %>% 
+  mutate(samples= str_replace(samples,"R$","")) %>% 
+    count(OTU, samples, replicates, wt = reads) %>%  # merge samples with the same names
+    group_by(OTU, samples) %>%
+    mutate(n_replicates = n())  %>%  # calculate the number of plant per field
+    filter(n > 0) %>%  # remove the OTU with 0 read per field
+    mutate(n_occur = n()) %>%  # calculate the number of plant positive  per field for each OTU
+    ungroup()  %>%
+    mutate(ratio= n_occur/n_replicates) %>%  # calculate the prevalence for each OTU in each field 
+    separate(samples, c("plots", "compartments"), sep = "-") %>%  # separate column sample into two columns : field and plant compartment
+    unite(plots, replicates, col = "samples", sep = "-") %>%  # rewrite the initial sample name
+    unite(samples, compartments, col = "samples", sep = "") %>%
+   # unite(samples, lib_number, col = "samples", sep = "_") %>%
+    mutate(removed_otu = replace(n_occur, which(ratio <= 0.5), 0)) %>%  # filter OTU presents in more than 50% of sample at the field level 1/3
+    mutate(removed_otu = replace(removed_otu, which(ratio > 0.5), 1)) %>%  # filter OTU presents in more than 50% of sample at the field level 2/3
+    mutate(reads= removed_otu * n) %>%  # filter OTU presents in more than 50% of sample at the field level 3/3
+    distinct(OTU, samples, reads) %>%  # extract only OTU samples and reads columns
+    group_by(samples) %>%
+    filter(sum(reads) >= min_sample_size)%>%  # some samples are now below our threshold
+    ungroup() %>%
+    group_by(OTU) %>% 
+    filter(sum(reads) >= 1) %>% # remove OTU with 0 reads
+    ungroup() %>%
+    spread(samples, reads) %>%  # redo the otu table after "denoising"
+    replace(is.na(.), 0) %>%  # replace Na by 0
+    rename(OTU_ID = OTU) -> otu_data_rac
+
+
+#######################  Preparation table taxo
+
+read_tsv(input) %>%
+    select(OTU, taxonomy) %>%
+    separate(taxonomy, taxonomic_levels,
+             sep = "[|]", fill = "right", extra = "drop") %>%
+    mutate_if(is.character,
+              funs(str_replace(.,
+                               "unknown|uncultured|unidentified|\\*",
+                               replacement = NA_character_))) %>%
+    mutate(taxonomy = str_glue_data(.,
+                                    "Root;k__{Kingdom}",
+                                    ";p__{Phylum}",
+                                    ";c__{Class}",
+                                    ";o__{Order}",
+                                    ";f__{Family}",
+                                    ";g__{Genus}",
+                                    ";s__{Species}",
+                                    sep = "|")) %>%
+    mutate(taxonomy = as.character(taxonomy)) %>%
+    rename(OTU_ID = OTU)->tax_data
+tax_data %>% 
+    semi_join(otu_data_rac, by = "OTU_ID") -> tax_data_rac  # keep only OTU present in otu_data
+tax_data %>% 
+    semi_join(otu_data_tige, by = "OTU_ID") -> tax_data_tige
+
+
+## importer le fichier de métadonnées : le dataframe doit avoir en
+## première colonne SampleID les mêmes noms d'échantillons que dans le
+## data frame OTU_table puis avoir toutes les informations pour chaque
+## échantillon dans les colonnes suivantes
+
+
+read_tsv(metadata) %>%
+    filter(! str_detect(genotype_group, "outlier")) %>% 
+    filter(! str_detect(field, "T4")) %>% 
+    filter(! str_detect(field, "T8")) %>% 
+    separate(SampleID, c("SampleID", "lib_number"), sep = "_")%>%
+    mutate(SampleID = str_to_upper(SampleID)) -> sample_data 
+sample_data[!duplicated(sample_data$SampleID),]->sample_data
+sample_data%>% 
+  filter(str_detect(SampleID,"T$")) %>% 
+  mutate(SampleID= str_replace(SampleID,"T$",""))->sample_data_tige
+sample_data%>% 
+  filter(str_detect(SampleID,"R$")) %>% 
+  mutate(SampleID= str_replace(SampleID,"R$",""))->sample_data_rac
+
+```
+
+
+Création des objets Phyloseq
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, paged.print=FALSE}
+tree <- "yyt_20191220_tree.newick"
+read_tree(tree) ->tree
+## 16s complet
+otu_data %>% 
+  mutate(OTU_ID=as.character(OTU_ID)) %>%
+  column_to_rownames(var = "OTU_ID") %>% 
+  as.matrix() -> otu
+tax_data %>% 
+ mutate(OTU_ID=as.character(OTU_ID)) %>%
+column_to_rownames(var = "OTU_ID") %>% 
+  select(-Kingdom) %>% 
+as.matrix()->tax
+rownames(sample_data) <- sample_data$SampleID
+object_phylo.16s <- phyloseq(otu_table(otu, taxa_are_rows = TRUE), tax_table(tax), sample_data(sample_data))
+phy_tree(object_phylo.16s) <- tree
+## rarefaction
+phylo_rare.16s = rarefy_even_depth(object_phylo.16s)
+
+
+##### 16s tiges
+ otu_data_tige %>% 
+  mutate(OTU_ID=as.character(OTU_ID)) %>%
+  column_to_rownames(var = "OTU_ID") %>% 
+  as.matrix() -> otu_tige
+
+tax_data_tige %>% 
+  mutate(OTU_ID=as.character(OTU_ID)) %>%
+  column_to_rownames(var = "OTU_ID") %>% 
+  select(-Kingdom) %>% 
+  as.matrix()->tax_tige
+
+sample_data_tige %>% 
+  column_to_rownames(var = "SampleID")->sample_data_tige
+
+object_phylo.16s_tige <- phyloseq(otu_table(otu_tige, taxa_are_rows = TRUE), tax_table(tax_tige), sample_data(sample_data_tige))
+phy_tree(object_phylo.16s_tige) <- tree
+## rarefaction
+phylo_rare.16s_tige = rarefy_even_depth(object_phylo.16s_tige)
+
+##### 16s racines
+
+ otu_data_rac %>% 
+  mutate(OTU_ID=as.character(OTU_ID)) %>%
+  column_to_rownames(var = "OTU_ID") %>% 
+  as.matrix() -> otu_rac
+
+tax_data_rac %>% 
+  mutate(OTU_ID=as.character(OTU_ID)) %>%
+  column_to_rownames(var = "OTU_ID") %>% 
+  select(-Kingdom) %>% 
+  as.matrix()->tax_rac
+
+sample_data_rac %>% 
+  column_to_rownames(var = "SampleID")->sample_data_rac
+
+object_phylo.16s_rac <- phyloseq(otu_table(otu_rac, taxa_are_rows = TRUE), tax_table(tax_rac), sample_data(sample_data_rac))
+phy_tree(object_phylo.16s_rac) <- tree
+## rarefaction
+phylo_rare.16s_rac = rarefy_even_depth(object_phylo.16s_rac)
+```
+
+
+
+Calcul distance unifrac racines
+```{r message=FALSE, warning=FALSE, paged.print=FALSE}
+
+distance(phylo_rare.16s_rac, method="unifrac", type="genotype_group")->dist_rac
+
+
+ord <- ordinate(phylo_rare.16s_rac,"PCoA",dist_rac)
+
+
+plot_ordination(phylo_rare.16s_rac, 
+                ord,
+                color = "genotype_group", 
+                title = "Rice roots bacterial communities : PCoA UniFrac" ) + 
+  theme_bw()+ scale_color_manual(values=c("#8D4725","#099A4D"), name="Rice genotype group") + theme(text = element_text(size = 12)) + geom_point(size = 2) + geom_text(mapping = aes(label = field), size = 3, vjust = 1.5)
+ggsave('Rice_roots_bacterial_communities_PCoA_UniFrac.pdf')
+
+
+
+
+```
+
+Calcul distance unifrac tiges
+```{r message=FALSE, warning=FALSE, paged.print=FALSE}
+
+distance(phylo_rare.16s_tige, method="unifrac", type="genotype_group")->dist_tige
+
+
+ord <- ordinate(phylo_rare.16s_tige,"PCoA",dist_tige)
+
+plot_ordination(phylo_rare.16s_tige, 
+                ord,
+                color = "genotype_group", 
+                title = "Rice stems bacterial communities : PCoA UniFrac" ) + 
+theme_bw()+ scale_color_manual(values=c("#8D4725","#099A4D"), name="Rice genotype group") + theme(text = element_text(size = 12)) + geom_point(size = 2) + geom_text(mapping = aes(label = field), size = 3, vjust = 1.5) 
+ggsave('Rice_stems_bacterial_communities_PCoA_UniFrac.pdf')
+
+
+
+```
+
+Calcul distance unifrac 16s complet
+```{r message=FALSE, warning=FALSE, paged.print=FALSE}
+
+distance(phylo_rare.16s, method="unifrac", type="genotype_group")->dist
+
+
+ord <- ordinate(phylo_rare.16s,"PCoA",dist)
+
+
+plot_ordination(phylo_rare.16s, 
+                ord,
+                color = "tissu", 
+                title = "Rice roots bacterial communities : PCoA UniFrac" ) + 
+  theme_bw()+ scale_color_manual(values=c("#FF0000","#0100FF"), name="Rice genotype group") + theme(text = element_text(size = 12)) + geom_point(size = 2) + geom_text(mapping = aes(label = field), size = 3, vjust = 1.5)
+ggsave('Rice_bacterial_communities_PCoA_UniFrac.pdf')
+
+```
+
+
+ITS#####ITS#####ITS#####ITS##########ITS##########ITS##########ITS##########ITS##########ITS##########ITS##########ITS##########ITS##########ITS##########ITS##########ITS##########ITS##########ITS##########ITS##########ITS##########ITS##########ITS##########ITS##########ITS##########ITS##########ITS##########ITS##########ITS##########ITS##########ITS##########ITS##########ITS##########ITS##########ITS##########ITS##########ITS##########ITS##########ITS##########ITS##########ITS##########ITS##########ITS##########ITS##########ITS##########ITS##########ITS##########ITS##########ITS##########ITS#####
+
+
+```{r message=FALSE, warning=FALSE, include=FALSE, paged.print=FALSE}
+
+input <- "Yunnan_Rice_2016_ITS2_roots_and_stems_384_samples.OTU.filtered.table"
+metadata <- "metadataITS.txt"
+min_sample_size <- 5000
+taxonomic_levels <- c("Kingdom","Phylum", "Class",
+                      "Order", "Family", "Genus", "Species")
+dist_rice<- "dist_gbs_riz.out"
+
+
+contaminants <- c("bd77e70ed77a3eb370f7cd49279e612a802b48e9",
+                  "7dcb9f55aa454d99bb3f070532390cd83a14510f",
+                  "0515ff7081a7be7b2dd9c61a873606467dd3bd16",
+                  "e99cbd46b948b6ed495d57c4912a7c379371b319",
+                  "0430f5d4683e420f621c1e7b5184edf7caeef825",
+                  "cb0c8bb25cdb7bb93854a8ad8d458d9956216976",
+                  "ea97caef9fe9852b790f3af3b7fca055cf879fff",
+                  "2b6ddc742015ddfe55b4cece17a37e3d51d676bb",
+                  "060484f6d2e92dae77e49bd15cbca4ff23bb3633",
+                  "767c9015339bb4645d3aabc6f6084fc919ec8922",
+                  "50cdcc4580d12e366fc9ba67096412f99efb4d31",
+                  "4f8e31a21513df150969121b888f14d4a23dc396",
+                  "cb0b06815600943b0d6f5e264ce100af735ceb7f",
+                  "db09dd1414433afc2ace0f35ebef74eb56a07738",
+                  "1f6ee21e4df1f0b82f5fcd3a714db2f4b0fda861",
+                  "56f8ecc2fb3eecc2970dc6e4313a3a9b518b277f",
+                  "e78ead4f7edf76d8aada3075746d23c5bb6d04be",
+                  "79046ea0dc406ca60176bfbd487972216df30f79",
+                  "286cc65ad714f8f658ba366cd848cd98cd8f4b42",
+                  "959e360c4b9df98f9cc26cd2b0d00731dd91d396",
+                  "fdc370fa739e5d31c57d68755a222620286e7c88",
+                  "cd9d83cd52ec7b59f9d6b425ea904f759efa1467",
+                  "65fc49d5c276a931475c633360d3016b61e5ecbf",
+                  "741ec14b5a2d9b048d7dcef0af1931f5bf86fd45",
+                  "72ba0bccea1e66b7dae04cbb07e888d43946e43b",
+                  "4f4b70a73babe165a258d488250785e47aa8e23b",
+                  "2ebe41871eef99311afb333fe4b7364a0e2104a7",
+                  "341be306ccd0350c58b6d173653d53c260457013",
+                  "ae80e01ade59247a843b7bd7333c1d7e68af8b79",
+                  "652c80fed35e9fc4fe62c95c7bbd2bec2971a8b6",
+                  "4cc2b4198333dde3bdb51398ca1463a0fbe40f09",
+                  "09b998b36df0fe954ee73eec7429344f01ae85cb",
+                  "b2c960a1301788309c5236df0ba5203591f47f19",
+                  "0902e5cc96601773d06ca5d6e3fababe8046035d",
+                  "f616d5ec951fa74f885f5066be07792ff75ace85",
+                  "1135f988fd39dfdeead740e2736cd5ac2ed17c28",
+                  "4338d1db8624a6865cc094c470b5d43f9ebe862d",
+                  "6bdaca9702223130a18ab6ec3ad38c4204203845",
+                  "044b9ba5d63fee12ff779b40a1ebee27ed888c0d",
+                  "80b383060737a0a556344cd09bb401e6d1bf26f9",
+                  "91d8960e56f38cfc2d8f9a2b6106801b5ba3e010",
+                  "832b3ddd6e66dec78de64c3ceae677d353dd1a4e",
+                  "b25fb740d0bdb56faaaceea1dab8df40de5f5caf",
+                  "038f9ceefc1ad41d5768c308f06508112dd940d8",
+                  "260d35f001fb237ad720bb1ceea9aa538a9584f3",
+                  "a495310072dc56ea7ef7a507216d92ac7e561785",
+                  "19eed3e71800a280c4aa3ee4e8b8ffebc558168d",
+                  "65ebd004af93abcd1d0e2457a752261544088a5e")
+
+
+## Get a list of contaminants (more abundant in controls than in any
+## normal samples)
+read_tsv(input) %>%
+    filter(! amplicon %in% contaminants) %>%
+    filter(! grepl("No_hit|Nocardiaceae|Chloroplast|Mitochondria", taxonomy)) %>%
+    select(starts_with("YY"), OTU, starts_with("T"), -total, -taxonomy) %>%
+    gather(key = "samples", value = "reads", -OTU) %>%
+    mutate(samples = str_replace(samples, "^YY.*", "sample")) %>%
+    mutate(samples = str_replace(samples, "^[tT].*", "control")) %>%
+    group_by(OTU, samples) %>%
+    summarize(max = max(reads)) %>%
+    ungroup() %>%
+    group_by(OTU) %>%
+    filter(max >= max(max) & max > 0) %>%
+    filter(samples == "control") %>%
+    ungroup() %>%
+    select(OTU) %>%
+    pull() -> my_contaminants
+        
+  
+
+
+## éliminer les séquences contaminantes : plantes, contaminants et no
+## hit, si besoin ajouter les autres OTU contaminants
+read_tsv(input) %>%
+    filter(! amplicon %in% contaminants) %>%
+    filter(! grepl("No_hit|Nocardiaceae|Chloroplast|Mitochondria", taxonomy)) %>%
+    select(starts_with("YY"), OTU) %>%
+    gather(key = "samples", value = "reads", -OTU) %>%
+    group_by(samples) %>%
+    filter(sum(reads) >= min_sample_size) %>%
+    ungroup() %>%
+    separate(samples, c("samples", "lib_number"), sep = "_") %>%  # 'YYM1-aT_S1' -> 'YYM1-aT' 'S1'
+    separate(samples, c("plots", "replicates"), sep = "-") %>%  # 'YYM1-aT' -> 'YYM1' 'aT' (field name and plant id + compartment)
+    mutate(compartments = str_replace(replicates, "[[:lower:]]", "")) %>%  # 'aT' -> 'T' (compartment)
+    mutate(replicates = str_replace(replicates, "[[:upper:]]", "")) %>%  # 'aT' -> 'a' (plant id)
+    mutate(replicates = str_to_upper(replicates)) %>%
+    unite(plots, compartments, col = "samples", sep = "-") %>%  # 'YYM1' + 'T' -> 'YYM1-T'
+  filter(str_detect(samples,"T$")) %>% 
+  mutate(samples= str_replace(samples,"T$","")) %>% 
+    count(OTU, samples, replicates, wt = reads) %>%  # merge samples with the same names
+    group_by(OTU, samples) %>%
+    mutate(n_replicates = n())  %>%  # calculate the number of plant per field
+    filter(n > 0) %>%  # remove the OTU with 0 read per field
+    mutate(n_occur = n()) %>%  # calculate the number of plant positive  per field for each OTU
+    ungroup()  %>%
+    mutate(ratio= n_occur/n_replicates) %>%  # calculate the prevalence for each OTU in each field 
+    separate(samples, c("plots", "compartments"), sep = "-") %>%  # separate column sample into two columns : field and plant compartment
+    unite(plots, replicates, col = "samples", sep = "-") %>%  # rewrite the initial sample name
+    unite(samples, compartments, col = "samples", sep = "") %>%
+   # unite(samples, lib_number, col = "samples", sep = "_") %>%
+    mutate(removed_otu = replace(n_occur, which(ratio <= 0.5), 0)) %>%  # filter OTU presents in more than 50% of sample at the field level 1/3
+    mutate(removed_otu = replace(removed_otu, which(ratio > 0.5), 1)) %>%  # filter OTU presents in more than 50% of sample at the field level 2/3
+    mutate(reads= removed_otu * n) %>%  # filter OTU presents in more than 50% of sample at the field level 3/3
+    distinct(OTU, samples, reads) %>%  # extract only OTU samples and reads columns
+    group_by(samples) %>%
+    filter(sum(reads) >= min_sample_size)%>%  # some samples are now below our threshold
+    ungroup() %>%
+    group_by(OTU) %>% 
+    filter(sum(reads) >= 1) %>% # remove OTU with 0 reads
+    ungroup() %>%
+    spread(samples, reads) %>%  # redo the otu table after "denoising"
+    replace(is.na(.), 0) %>%  # replace Na by 0
+    rename(OTU_ID = OTU) -> otu_data_tige
+ 
+#its complet
+read_tsv(input) %>%
+    filter(! amplicon %in% contaminants) %>%
+    filter(! grepl("No_hit|Nocardiaceae|Chloroplast|Mitochondria", taxonomy)) %>%
+    select(starts_with("YY"), OTU) %>%
+    gather(key = "samples", value = "reads", -OTU) %>%
+    group_by(samples) %>%
+    filter(sum(reads) >= min_sample_size) %>%
+    ungroup() %>%
+    separate(samples, c("samples", "lib_number"), sep = "_") %>%  # 'YYM1-aT_S1' -> 'YYM1-aT' 'S1'
+    separate(samples, c("plots", "replicates"), sep = "-") %>%  # 'YYM1-aT' -> 'YYM1' 'aT' (field name and plant id + compartment)
+    mutate(compartments = str_replace(replicates, "[[:lower:]]", "")) %>%  # 'aT' -> 'T' (compartment)
+    mutate(replicates = str_replace(replicates, "[[:upper:]]", "")) %>%  # 'aT' -> 'a' (plant id)
+    mutate(replicates = str_to_upper(replicates)) %>%
+    unite(plots, compartments, col = "samples", sep = "-") %>%  # 'YYM1' + 'T' -> 'YYM1-T'
+  filter(str_detect(samples,"R$")) %>% 
+  mutate(samples= str_replace(samples,"R$","")) %>% 
+    count(OTU, samples, replicates, wt = reads) %>%  # merge samples with the same names
+    group_by(OTU, samples) %>%
+    mutate(n_replicates = n())  %>%  # calculate the number of plant per field
+    filter(n > 0) %>%  # remove the OTU with 0 read per field
+    mutate(n_occur = n()) %>%  # calculate the number of plant positive  per field for each OTU
+    ungroup()  %>%
+    mutate(ratio= n_occur/n_replicates) %>%  # calculate the prevalence for each OTU in each field 
+    separate(samples, c("plots", "compartments"), sep = "-") %>%  # separate column sample into two columns : field and plant compartment
+    unite(plots, replicates, col = "samples", sep = "-") %>%  # rewrite the initial sample name
+    unite(samples, compartments, col = "samples", sep = "") %>%
+   # unite(samples, lib_number, col = "samples", sep = "_") %>%
+    mutate(removed_otu = replace(n_occur, which(ratio <= 0.5), 0)) %>%  # filter OTU presents in more than 50% of sample at the field level 1/3
+    mutate(removed_otu = replace(removed_otu, which(ratio > 0.5), 1)) %>%  # filter OTU presents in more than 50% of sample at the field level 2/3
+    mutate(reads= removed_otu * n) %>%  # filter OTU presents in more than 50% of sample at the field level 3/3
+    distinct(OTU, samples, reads) %>%  # extract only OTU samples and reads columns
+    group_by(samples) %>%
+    filter(sum(reads) >= min_sample_size)%>%  # some samples are now below our threshold
+    ungroup() %>%
+    group_by(OTU) %>% 
+    filter(sum(reads) >= 1) %>% # remove OTU with 0 reads
+    ungroup() %>%
+    spread(samples, reads) %>%  # redo the otu table after "denoising"
+    replace(is.na(.), 0) %>%  # replace Na by 0
+    rename(OTU_ID = OTU) -> otu_data_rac
+
+####16s complet
+read_tsv(input) %>%
+    filter(! amplicon %in% contaminants) %>%
+    filter(! grepl("No_hit|Nocardiaceae|Chloroplast|Mitochondria", taxonomy)) %>%
+    select(starts_with("YY"), OTU) %>%
+    gather(key = "samples", value = "reads", -OTU) %>%
+    group_by(samples) %>%
+    filter(sum(reads) >= min_sample_size) %>%
+    ungroup() %>%
+    separate(samples, c("samples", "lib_number"), sep = "_") %>%  # 'YYM1-aT_S1' -> 'YYM1-aT' 'S1'
+    separate(samples, c("plots", "replicates"), sep = "-") %>%  # 'YYM1-aT' -> 'YYM1' 'aT' (field name and plant id + compartment)
+    mutate(compartments = str_replace(replicates, "[[:lower:]]", "")) %>%  # 'aT' -> 'T' (compartment)
+    mutate(replicates = str_replace(replicates, "[[:upper:]]", "")) %>%  # 'aT' -> 'a' (plant id)
+    mutate(replicates = str_to_upper(replicates)) %>%
+    unite(plots, compartments, col = "samples", sep = "-") %>%  # 'YYM1' + 'T' -> 'YYM1-T'
+    count(OTU, samples, replicates, wt = reads) %>%  # merge samples with the same names
+    group_by(OTU, samples) %>%
+    mutate(n_replicates = n())  %>%  # calculate the number of plant per field
+    filter(n > 0) %>%  # remove the OTU with 0 read per field
+    mutate(n_occur = n()) %>%  # calculate the number of plant positive  per field for each OTU
+    ungroup()  %>%
+    mutate(ratio= n_occur/n_replicates) %>%  # calculate the prevalence for each OTU in each field 
+    separate(samples, c("plots", "compartments"), sep = "-") %>%  # separate column sample into two columns : field and plant compartment
+    unite(plots, replicates, col = "samples", sep = "-") %>%  # rewrite the initial sample name
+    unite(samples, compartments, col = "samples", sep = "") %>%
+   # unite(samples, lib_number, col = "samples", sep = "_") %>%
+    mutate(removed_otu = replace(n_occur, which(ratio <= 0.5), 0)) %>%  # filter OTU presents in more than 50% of sample at the field level 1/3
+    mutate(removed_otu = replace(removed_otu, which(ratio > 0.5), 1)) %>%  # filter OTU presents in more than 50% of sample at the field level 2/3
+    mutate(reads= removed_otu * n) %>%  # filter OTU presents in more than 50% of sample at the field level 3/3
+    distinct(OTU, samples, reads) %>%  # extract only OTU samples and reads columns
+    group_by(samples) %>%
+    filter(sum(reads) >= min_sample_size)%>%  # some samples are now below our threshold
+    ungroup() %>%
+    group_by(OTU) %>% 
+    filter(sum(reads) >= 1) %>% # remove OTU with 0 reads
+    ungroup() %>%
+    spread(samples, reads) %>%  # redo the otu table after "denoising"
+    replace(is.na(.), 0) %>%  # replace Na by 0
+    rename(OTU_ID = OTU) -> otu_data
+
+#######################  Preparation table taxo
+
+read_tsv(input) %>%
+    select(OTU, taxonomy) %>%
+    separate(taxonomy, taxonomic_levels,
+             sep = "[|]", fill = "right", extra = "drop") %>%
+    mutate_if(is.character,
+              funs(str_replace(.,
+                               "unknown|uncultured|unidentified|\\*",
+                               replacement = NA_character_))) %>%
+    mutate(taxonomy = str_glue_data(.,
+                                    "Root;k__{Kingdom}",
+                                    ";p__{Phylum}",
+                                    ";c__{Class}",
+                                    ";o__{Order}",
+                                    ";f__{Family}",
+                                    ";g__{Genus}",
+                                    ";s__{Species}",
+                                    sep = "|")) %>%
+    mutate(taxonomy = as.character(taxonomy)) %>%
+    rename(OTU_ID = OTU) %>% 
+  semi_join(otu_data, by = "OTU_ID")->tax_data
+tax_data %>% 
+    semi_join(otu_data_rac, by = "OTU_ID") -> tax_data_rac  # keep only OTU present in otu_data
+tax_data %>% 
+    semi_join(otu_data_tige, by = "OTU_ID") -> tax_data_tige
+
+
+## importer le fichier de métadonnées : le dataframe doit avoir en
+## première colonne SampleID les mêmes noms d'échantillons que dans le
+## data frame OTU_table puis avoir toutes les informations pour chaque
+## échantillon dans les colonnes suivantes
+
+
+read_tsv(metadata) %>%
+    filter(! str_detect(genotype_group, "outlier")) %>% 
+    filter(! str_detect(field, "T4")) %>% 
+    filter(! str_detect(field, "T8")) %>% 
+    separate(SampleID, c("SampleID", "lib_number"), sep = "_")%>%
+    mutate(SampleID = str_to_upper(SampleID)) -> sample_data 
+sample_data[!duplicated(sample_data$SampleID),]->sample_data
+sample_data%>% 
+  filter(str_detect(SampleID,"T$")) %>% 
+  mutate(SampleID= str_replace(SampleID,"T$",""))->sample_data_tige
+sample_data%>% 
+  filter(str_detect(SampleID,"R$")) %>% 
+  mutate(SampleID= str_replace(SampleID,"R$",""))->sample_data_rac
+
+```
+
+Création des objets Phyloseq
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, paged.print=FALSE}
+tree <- "seq.newick"
+read_tree(tree) ->tree
+
+## its complet
+otu_data %>% 
+  mutate(OTU_ID=as.character(OTU_ID)) %>%
+  column_to_rownames(var = "OTU_ID") %>% 
+  as.matrix() -> otu
+
+tax_data %>% 
+  mutate(OTU_ID=as.character(OTU_ID)) %>%
+  column_to_rownames(var = "OTU_ID") %>% 
+  select(-Kingdom) %>% 
+  as.matrix()->tax
+
+rownames(sample_data) <- sample_data$SampleID
+object_phylo.its <- phyloseq(otu_table(otu, taxa_are_rows = TRUE), tax_table(tax), sample_data(sample_data))
+phy_tree(object_phylo.its) <- tree
+## rarefaction
+phylo_rare.its = rarefy_even_depth(object_phylo.its)
+
+
+##### its tiges
+ otu_data_tige %>% 
+  mutate(OTU_ID=as.character(OTU_ID)) %>%
+  column_to_rownames(var = "OTU_ID") %>% 
+  as.matrix() -> otu_tige
+
+tax_data_tige %>% 
+  mutate(OTU_ID=as.character(OTU_ID)) %>%
+  column_to_rownames(var = "OTU_ID") %>% 
+  select(-Kingdom) %>% 
+  as.matrix()->tax_tige
+
+sample_data_tige %>% 
+  column_to_rownames(var = "SampleID")->sample_data_tige
+
+object_phylo.its_tige <- phyloseq(otu_table(otu_tige, taxa_are_rows = TRUE), tax_table(tax_tige), sample_data(sample_data_tige))
+phy_tree(object_phylo.its_tige) <- tree
+## rarefaction
+phylo_rare.its_tige = rarefy_even_depth(object_phylo.its_tige)
+
+##### its racines
+
+ otu_data_rac %>% 
+  mutate(OTU_ID=as.character(OTU_ID)) %>%
+  column_to_rownames(var = "OTU_ID") %>% 
+  as.matrix() -> otu_rac
+
+tax_data_rac %>% 
+  mutate(OTU_ID=as.character(OTU_ID)) %>%
+  column_to_rownames(var = "OTU_ID") %>% 
+  select(-Kingdom) %>% 
+  as.matrix()->tax_rac
+
+sample_data_rac %>% 
+  column_to_rownames(var = "SampleID")->sample_data_rac
+
+object_phylo.its_rac <- phyloseq(otu_table(otu_rac, taxa_are_rows = TRUE), tax_table(tax_rac), sample_data(sample_data_rac))
+phy_tree(object_phylo.its_rac) <- tree
+## rarefaction
+phylo_rare.its_rac = rarefy_even_depth(object_phylo.its_rac)
+```
+
+
+
+Calcul distance unifrac racines
+```{r echo=FALSE, message=FALSE, warning=FALSE, paged.print=FALSE}
+
+distance(phylo_rare.its_rac, method="unifrac", type="genotype_group")->dist_rac
+
+ord <- ordinate(phylo_rare.its_rac,"PCoA",dist_rac)
+
+plot_ordination(phylo_rare.its_rac, 
+                ord,
+                color = "genotype_group", 
+                title = "Rice roots fungal communities : PCoA UniFrac" ) +   theme_bw()+ scale_color_manual(values=c("#8D4725","#099A4D"), name="Rice genotype group") + theme(text = element_text(size = 12)) + geom_point(size = 2) + geom_text(mapping = aes(label = field), size = 3, vjust = 1.5) 
+ggsave('Rice_roots_fungal_communities_PCoA_UniFrac.pdf')
+
+```
+
+Calcul distance unifrac tiges
+```{r echo=FALSE, message=FALSE, warning=FALSE, paged.print=FALSE}
+
+distance(phylo_rare.its_tige, method="unifrac", type="genotype_group")->dist_tige
+
+
+ord <- ordinate(phylo_rare.its_tige,"PCoA",dist_tige)
+
+plot_ordination(phylo_rare.its_tige, 
+                ord,
+                color = "genotype_group", 
+                title = "Rice stems fungal communities : PCoA UniFrac" ) + 
+theme_bw()+ scale_color_manual(values=c("#8D4725","#099A4D"), name="Rice genotype group") + theme(text = element_text(size = 12)) + geom_point(size = 2) + geom_text(mapping = aes(label = field), size = 3, vjust = 1.5)  
+ggsave('Rice_stems_fungal_communities_PCoA_UniFrac.pdf')
+
+
+```
+
+
+Calcul distance unifrac its complet
+```{r message=FALSE, warning=FALSE, paged.print=FALSE}
+
+distance(phylo_rare.its, method="unifrac", type="genotype_group")->dist
+
+
+ord <- ordinate(phylo_rare.its,"PCoA",dist)
+
+
+plot_ordination(phylo_rare.its, 
+                ord,
+                color = "tissu", 
+                title = "Rice roots bacterial communities : PCoA UniFrac" ) + 
+  theme_bw()+ scale_color_manual(values=c("#FF0000","#0100FF"), name="Rice genotype group") + theme(text = element_text(size = 12)) + geom_point(size = 2) + geom_text(mapping = aes(label = field), size = 3, vjust = 1.5)
+ggsave('Rice_fungal_communities_PCoA_UniFrac.pdf')
+
+
+```

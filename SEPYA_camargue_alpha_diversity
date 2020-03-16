@@ -1,0 +1,335 @@
+---
+title: "Phyloseq camargue alpha div and Jaccard"
+author: "pascal"
+date: "14 novembre 2019"
+output:
+  word_document: default
+  html_document: default
+---
+
+
+```{r message=FALSE, warning=FALSE, include=FALSE, paged.print=FALSE}
+setwd("~/cirad/cahier de laboratoire/16s chine/analyses fred/test r studio/r-studio_OTU_table/work")
+
+library(reshape2)
+library(phyloseq)
+library(tidyverse)
+library(vegan)
+
+load("physeq_camargue.RData") 
+```
+
+Microbiota in root stem and seed separately 
+============================================
+ 
+Alpha`diversity: root 
+---------------------
+```{r echo=FALSE, message=FALSE, warning=FALSE, paged.print=FALSE}
+
+p <- plot_richness(physeq_rare_root, x="stage", color="stage", measures=c("Observed","Shannon"), nrow = 1)+   
+  scale_color_manual(values=c("#32E115","#357B3C","#F4EE06"), name="plant stage root")
+
+
+
+
+## representation complete de effet les grand groupe genetique et des compartiments de la plante
+
+ggplot(p$data,aes(stage,value,colour=stage,shape=stage)) +
+  facet_grid(variable ~ stage, drop=T,scale="free",space="fixed") +
+  geom_violin() +
+    geom_jitter(shape=16, position=position_jitter(0.2)) +
+  ylab("Diversity index")  + xlab(NULL) + theme_bw() +   
+     scale_color_manual(values=c("#32E115","#357B3C","#F4EE06"), name="plant stage root")
+
+
+## Export the alpha div values
+rich.plus <- dcast(p$data, stage + bloc + year + varieties + stage_year + varieties_year + varieties_stage ~ variable)
+
+
+## Alpha-div Stats 
+#stage
+TukeyHSD_Observed <- TukeyHSD(aov(Observed ~ stage, data =  rich.plus))
+TukeyHSD_Observed_df <- data.frame(TukeyHSD_Observed$stage)
+TukeyHSD_Observed_df$measure = "Observed"
+TukeyHSD_Observed_df$shapiro_test_pval = (shapiro.test(residuals(aov(Observed ~ stage, data =  rich.plus))))$p.value
+
+TukeyHSD_Shannon <- TukeyHSD(aov(Shannon ~ stage, data =  rich.plus))
+TukeyHSD_Shannon_df <- data.frame(TukeyHSD_Shannon$stage)
+TukeyHSD_Shannon_df$measure = "Shannon"
+TukeyHSD_Shannon_df$shapiro_test_pval = (shapiro.test(residuals(aov(Shannon ~ stage, data =  rich.plus))))$p.value
+cbind(TukeyHSD_Observed_df,TukeyHSD_Shannon_df)->alpha_div_stats_stage_root
+alpha_div_stats_stage_root
+
+
+
+```
+Alpha`diversity: stem 
+---------------------
+```{r echo=FALSE, message=FALSE, warning=FALSE, paged.print=FALSE}
+
+p <- plot_richness(physeq_rare_stem, x="stage", color="stage", measures=c("Observed","Shannon"), nrow = 1)+   
+  scale_color_manual(values=c("#32E115","#357B3C","#F4EE06"), name="plant stage stem")
+
+## representation complete de effet les grand groupe genetique et des compartiments de la plante
+
+ggplot(p$data,aes(stage,value,colour=stage,shape=stage)) +
+  facet_grid(variable ~ stage, drop=T,scale="free",space="fixed") +
+  geom_violin() +
+    geom_jitter(shape=16, position=position_jitter(0.2)) +
+  ylab("Diversity index")  + xlab(NULL) + theme_bw() +   
+     scale_color_manual(values=c("#32E115","#357B3C","#F4EE06"), name="plant stage_stem")
+
+
+
+
+## Export the alpha div values
+rich.plus <- dcast(p$data, stage + bloc + year + varieties + stage_year + varieties_year + varieties_stage ~ variable)
+
+
+## Alpha-div Stats 
+#stage
+TukeyHSD_Observed <- TukeyHSD(aov(Observed ~ stage, data =  rich.plus))
+TukeyHSD_Observed_df <- data.frame(TukeyHSD_Observed$stage)
+TukeyHSD_Observed_df$measure = "Observed"
+TukeyHSD_Observed_df$shapiro_test_pval = (shapiro.test(residuals(aov(Observed ~ stage, data =  rich.plus))))$p.value
+
+TukeyHSD_Shannon <- TukeyHSD(aov(Shannon ~ stage, data =  rich.plus))
+TukeyHSD_Shannon_df <- data.frame(TukeyHSD_Shannon$stage)
+TukeyHSD_Shannon_df$measure = "Shannon"
+TukeyHSD_Shannon_df$shapiro_test_pval = (shapiro.test(residuals(aov(Shannon ~ stage, data =  rich.plus))))$p.value
+cbind(TukeyHSD_Observed_df,TukeyHSD_Shannon_df)->alpha_div_stats_stage_stem
+alpha_div_stats_stage_stem
+
+
+```
+
+Alpha`diversity: seed 
+---------------------
+```{r echo=FALSE, message=FALSE, warning=FALSE, paged.print=FALSE}
+
+p <- plot_richness(physeq_rare_seed, x="stage", color="stage", measures=c("Observed","Shannon"), nrow = 1)+   
+  scale_color_manual(values=c("#32E115","#357B3C","#F4EE06"), name="plant stage seed")
+
+
+
+
+## representation complete de effet les grand groupe genetique et des compartiments de la plante
+
+ggplot(p$data,aes(stage,value,colour=stage,shape=stage)) +
+  facet_grid(variable ~ stage, drop=T,scale="free",space="fixed") +
+  geom_violin() +
+    geom_jitter(shape=16, position=position_jitter(0.2)) +
+  ylab("Diversity index")  + xlab(NULL) + theme_bw() +   
+     scale_color_manual(values=c("#32E115","#357B3C","#F4EE06"), name="plant stage seed")
+
+
+## Export the alpha div values
+rich.plus <- dcast(p$data, stage + bloc + year + varieties + stage_year + varieties_year + varieties_stage ~ variable)
+
+
+## Alpha-div Stats 
+#stage
+TukeyHSD_Observed <- TukeyHSD(aov(Observed ~ stage, data =  rich.plus))
+TukeyHSD_Observed_df <- data.frame(TukeyHSD_Observed$stage)
+TukeyHSD_Observed_df$measure = "Observed"
+TukeyHSD_Observed_df$shapiro_test_pval = (shapiro.test(residuals(aov(Observed ~ stage, data =  rich.plus))))$p.value
+
+TukeyHSD_Shannon <- TukeyHSD(aov(Shannon ~ stage, data =  rich.plus))
+TukeyHSD_Shannon_df <- data.frame(TukeyHSD_Shannon$stage)
+TukeyHSD_Shannon_df$measure = "Shannon"
+TukeyHSD_Shannon_df$shapiro_test_pval = (shapiro.test(residuals(aov(Shannon ~ stage, data =  rich.plus))))$p.value
+cbind(TukeyHSD_Observed_df,TukeyHSD_Shannon_df)->alpha_div_stats_stage_seed
+alpha_div_stats_stage_seed
+
+```
+#################################################################
+effet stade pour les deux années séparées
+===========================================
+Subset physeq 
+```{r}
+subset_samples(physeq_rare_root, year %in% c("A_2017")) -> physeq_rare_root_2017
+subset_samples(physeq_rare_root, year %in% c("A_2018")) -> physeq_rare_root_2018
+
+subset_samples(physeq_rare_stem, year %in% c("A_2018")) -> physeq_rare_stem_2018
+subset_samples(physeq_rare_stem, year %in% c("A_2017")) -> physeq_rare_stem_2017
+
+
+```
+
+
+2017 root
+---------------
+
+Alpha`diversity: root
+---------------------
+```{r echo=FALSE, message=FALSE, warning=FALSE, paged.print=FALSE}
+
+p <- plot_richness(physeq_rare_root_2017, x="stage", color="stage", measures=c("Observed","Shannon"), nrow = 1)+   
+  scale_color_manual(values=c("#32E115","#357B3C","#F4EE06"), name="plant stage root 2017")
+
+## representation complete de effet les grand groupe genetique et des compartiments de la plante
+
+ggplot(p$data,aes(stage,value,colour=stage,shape=stage)) +
+  facet_grid(variable ~ stage, drop=T,scale="free",space="fixed") +
+  geom_violin() +
+    geom_jitter(shape=16, position=position_jitter(0.2)) +
+  ylab("Diversity index")  + xlab(NULL) + theme_bw() +   
+     scale_color_manual(values=c("#32E115","#357B3C","#F4EE06"), name="plant stage_root_2017")
+
+
+ggsave('Rice_root_bacterial_communities_richness_developement_stage_2017.pdf')
+
+## Export the alpha div values
+rich.plus <- dcast(p$data, stage + bloc + year + varieties + stage_year + varieties_year + varieties_stage ~ variable)
+
+
+## Alpha-div Stats 
+#stage
+TukeyHSD_Observed <- TukeyHSD(aov(Observed ~ stage, data =  rich.plus))
+TukeyHSD_Observed_df <- data.frame(TukeyHSD_Observed$stage)
+TukeyHSD_Observed_df$measure = "Observed"
+TukeyHSD_Observed_df$shapiro_test_pval = (shapiro.test(residuals(aov(Observed ~ stage, data =  rich.plus))))$p.value
+
+TukeyHSD_Shannon <- TukeyHSD(aov(Shannon ~ stage, data =  rich.plus))
+TukeyHSD_Shannon_df <- data.frame(TukeyHSD_Shannon$stage)
+TukeyHSD_Shannon_df$measure = "Shannon"
+TukeyHSD_Shannon_df$shapiro_test_pval = (shapiro.test(residuals(aov(Shannon ~ stage, data =  rich.plus))))$p.value
+cbind(TukeyHSD_Observed_df,TukeyHSD_Shannon_df)->alpha_div_stats_stage_root_2017
+alpha_div_stats_stage_root_2017
+
+
+```
+
+
+stem 2017
+----------
+
+Alpha`diversity: stem
+---------------------
+```{r echo=FALSE, message=FALSE, warning=FALSE, paged.print=FALSE}
+
+p <- plot_richness(physeq_rare_stem_2017, x="stage", color="stage", measures=c("Observed","Shannon"), nrow = 1)+   
+  scale_color_manual(values=c("#32E115","#357B3C","#F4EE06"), name="plant stage stem 2017")
+
+## representation complete de effet les grand groupe genetique et des compartiments de la plante
+
+ggplot(p$data,aes(stage,value,colour=stage,shape=stage)) +
+  facet_grid(variable ~ stage, drop=T,scale="free",space="fixed") +
+  geom_violin() +
+    geom_jitter(shape=16, position=position_jitter(0.2)) +
+  ylab("Diversity index")  + xlab(NULL) + theme_bw() +   
+     scale_color_manual(values=c("#32E115","#357B3C","#F4EE06"), name="plant stage_stem_2017")
+
+
+ggsave('Rice_stem_bacterial_communities_richness_developement_stage_2017.pdf')
+
+## Export the alpha div values
+rich.plus <- dcast(p$data, stage + bloc + year + varieties + stage_year + varieties_year + varieties_stage ~ variable)
+
+
+## Alpha-div Stats 
+#stage
+TukeyHSD_Observed <- TukeyHSD(aov(Observed ~ stage, data =  rich.plus))
+TukeyHSD_Observed_df <- data.frame(TukeyHSD_Observed$stage)
+TukeyHSD_Observed_df$measure = "Observed"
+TukeyHSD_Observed_df$shapiro_test_pval = (shapiro.test(residuals(aov(Observed ~ stage, data =  rich.plus))))$p.value
+
+TukeyHSD_Shannon <- TukeyHSD(aov(Shannon ~ stage, data =  rich.plus))
+TukeyHSD_Shannon_df <- data.frame(TukeyHSD_Shannon$stage)
+TukeyHSD_Shannon_df$measure = "Shannon"
+TukeyHSD_Shannon_df$shapiro_test_pval = (shapiro.test(residuals(aov(Shannon ~ stage, data =  rich.plus))))$p.value
+cbind(TukeyHSD_Observed_df,TukeyHSD_Shannon_df)->alpha_div_stats_stage_stem_2017
+alpha_div_stats_stage_stem_2017
+
+
+```
+
+
+
+2018 root
+==========
+
+
+Alpha`diversity: root
+---------------------
+```{r echo=FALSE, message=FALSE, warning=FALSE, paged.print=FALSE}
+
+p <- plot_richness(physeq_rare_root_2018, x="stage", color="stage", measures=c("Observed","Shannon"), nrow = 1)+   
+  scale_color_manual(values=c("#32E115","#357B3C","#F4EE06"), name="plant stage root 2018")
+
+## representation complete de effet les grand groupe genetique et des compartiments de la plante
+
+ggplot(p$data,aes(stage,value,colour=stage,shape=stage)) +
+  facet_grid(variable ~ stage, drop=T,scale="free",space="fixed") +
+  geom_violin() +
+    geom_jitter(shape=16, position=position_jitter(0.2)) +
+  ylab("Diversity index")  + xlab(NULL) + theme_bw() +   
+     scale_color_manual(values=c("#32E115","#357B3C","#F4EE06"), name="plant stage_root_2018")
+
+
+ggsave('Rice_root_bacterial_communities_richness_developement_stage_2018.pdf')
+
+## Export the alpha div values
+rich.plus <- dcast(p$data, stage + bloc + year + varieties + stage_year + varieties_year + varieties_stage ~ variable)
+
+
+## Alpha-div Stats 
+#stage
+TukeyHSD_Observed <- TukeyHSD(aov(Observed ~ stage, data =  rich.plus))
+TukeyHSD_Observed_df <- data.frame(TukeyHSD_Observed$stage)
+TukeyHSD_Observed_df$measure = "Observed"
+TukeyHSD_Observed_df$shapiro_test_pval = (shapiro.test(residuals(aov(Observed ~ stage, data =  rich.plus))))$p.value
+
+TukeyHSD_Shannon <- TukeyHSD(aov(Shannon ~ stage, data =  rich.plus))
+TukeyHSD_Shannon_df <- data.frame(TukeyHSD_Shannon$stage)
+TukeyHSD_Shannon_df$measure = "Shannon"
+TukeyHSD_Shannon_df$shapiro_test_pval = (shapiro.test(residuals(aov(Shannon ~ stage, data =  rich.plus))))$p.value
+cbind(TukeyHSD_Observed_df,TukeyHSD_Shannon_df)->alpha_div_stats_stage_root_2018
+alpha_div_stats_stage_root_2018
+
+
+```
+
+stem 2018
+----------
+
+Alpha`diversity: stem
+---------------------
+```{r echo=FALSE, message=FALSE, warning=FALSE, paged.print=FALSE}
+
+p <- plot_richness(physeq_rare_stem_2018, x="stage", color="stage", measures=c("Observed","Shannon"), nrow = 1)+   
+  scale_color_manual(values=c("#32E115","#357B3C","#F4EE06"), name="plant stage stem 2018")
+
+## representation complete de effet les grand groupe genetique et des compartiments de la plante
+
+ggplot(p$data,aes(stage,value,colour=stage,shape=stage)) +
+  facet_grid(variable ~ stage, drop=T,scale="free",space="fixed") +
+  geom_violin() +
+    geom_jitter(shape=16, position=position_jitter(0.2)) +
+  ylab("Diversity index")  + xlab(NULL) + theme_bw() +   
+     scale_color_manual(values=c("#32E115","#357B3C","#F4EE06"), name="plant stage_stem_2018")
+
+
+ggsave('Rice_stem_bacterial_communities_richness_developement_stage_2018.pdf')
+
+## Export the alpha div values
+rich.plus <- dcast(p$data, stage + bloc + year + varieties + stage_year + varieties_year + varieties_stage ~ variable)
+
+
+## Alpha-div Stats 
+#stage
+TukeyHSD_Observed <- TukeyHSD(aov(Observed ~ stage, data =  rich.plus))
+TukeyHSD_Observed_df <- data.frame(TukeyHSD_Observed$stage)
+TukeyHSD_Observed_df$measure = "Observed"
+TukeyHSD_Observed_df$shapiro_test_pval = (shapiro.test(residuals(aov(Observed ~ stage, data =  rich.plus))))$p.value
+
+TukeyHSD_Shannon <- TukeyHSD(aov(Shannon ~ stage, data =  rich.plus))
+TukeyHSD_Shannon_df <- data.frame(TukeyHSD_Shannon$stage)
+TukeyHSD_Shannon_df$measure = "Shannon"
+TukeyHSD_Shannon_df$shapiro_test_pval = (shapiro.test(residuals(aov(Shannon ~ stage, data =  rich.plus))))$p.value
+cbind(TukeyHSD_Observed_df,TukeyHSD_Shannon_df)->alpha_div_stats_stage_stem_2018
+alpha_div_stats_stage_stem_2018
+
+
+```
+

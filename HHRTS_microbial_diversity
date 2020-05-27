@@ -1,0 +1,1888 @@
+# All codes are written under R-markdown format
+
+---
+title: "code Alpha and beta diversity"
+author: "pascal"
+date: "4 novembre 2019"
+output:
+  html_document: default
+  word_document: default
+---
+
+```{r message=FALSE, warning=FALSE, include=FALSE, paged.print=FALSE}
+
+library(tidyverse)
+library(phyloseq)
+library(microbiome)
+library(RColorBrewer)
+library(reshape2)
+library(knitr)
+library(ape)
+library(metacoder)
+library(vegan)
+library(agricolae)
+#library(devtools)
+#install_github("pmartinezarbizu/pairwiseAdonis/pairwiseAdonis")
+library(pairwiseAdonis)
+
+setwd("~/cirad/cahier de laboratoire/16s chine/analyses fred/test r studio/r-studio_OTU_table/work")
+input <- "Yunnan_Rice_2016_16S_roots_and_stems_384_samples.OTU.filtered.table"
+metadata <- "metadata.txt"
+dist_rice<- "dist_gbs_riz.out"
+min_sample_size <- 1000
+taxonomic_levels <- c("Kingdom","Phylum", "Class",
+                      "Order", "Family", "Genus", "Species")
+
+contaminants <- c("bd77e70ed77a3eb370f7cd49279e612a802b48e9",
+                  "7dcb9f55aa454d99bb3f070532390cd83a14510f",
+                  "0515ff7081a7be7b2dd9c61a873606467dd3bd16",
+                  "e99cbd46b948b6ed495d57c4912a7c379371b319",
+                  "0430f5d4683e420f621c1e7b5184edf7caeef825",
+                  "cb0c8bb25cdb7bb93854a8ad8d458d9956216976",
+                  "ea97caef9fe9852b790f3af3b7fca055cf879fff",
+                  "2b6ddc742015ddfe55b4cece17a37e3d51d676bb",
+                  "060484f6d2e92dae77e49bd15cbca4ff23bb3633",
+                  "767c9015339bb4645d3aabc6f6084fc919ec8922",
+                  "50cdcc4580d12e366fc9ba67096412f99efb4d31",
+                  "4f8e31a21513df150969121b888f14d4a23dc396",
+                  "cb0b06815600943b0d6f5e264ce100af735ceb7f",
+                  "db09dd1414433afc2ace0f35ebef74eb56a07738",
+                  "1f6ee21e4df1f0b82f5fcd3a714db2f4b0fda861",
+                  "56f8ecc2fb3eecc2970dc6e4313a3a9b518b277f",
+                  "e78ead4f7edf76d8aada3075746d23c5bb6d04be",
+                  "79046ea0dc406ca60176bfbd487972216df30f79",
+                  "286cc65ad714f8f658ba366cd848cd98cd8f4b42",
+                  "959e360c4b9df98f9cc26cd2b0d00731dd91d396",
+                  "fdc370fa739e5d31c57d68755a222620286e7c88",
+                  "cd9d83cd52ec7b59f9d6b425ea904f759efa1467",
+                  "65fc49d5c276a931475c633360d3016b61e5ecbf",
+                  "741ec14b5a2d9b048d7dcef0af1931f5bf86fd45",
+                  "72ba0bccea1e66b7dae04cbb07e888d43946e43b",
+                  "4f4b70a73babe165a258d488250785e47aa8e23b",
+                  "2ebe41871eef99311afb333fe4b7364a0e2104a7",
+                  "341be306ccd0350c58b6d173653d53c260457013",
+                  "ae80e01ade59247a843b7bd7333c1d7e68af8b79",
+                  "652c80fed35e9fc4fe62c95c7bbd2bec2971a8b6",
+                  "4cc2b4198333dde3bdb51398ca1463a0fbe40f09",
+                  "09b998b36df0fe954ee73eec7429344f01ae85cb",
+                  "b2c960a1301788309c5236df0ba5203591f47f19",
+                  "0902e5cc96601773d06ca5d6e3fababe8046035d",
+                  "f616d5ec951fa74f885f5066be07792ff75ace85",
+                  "1135f988fd39dfdeead740e2736cd5ac2ed17c28",
+                  "4338d1db8624a6865cc094c470b5d43f9ebe862d",
+                  "6bdaca9702223130a18ab6ec3ad38c4204203845",
+                  "044b9ba5d63fee12ff779b40a1ebee27ed888c0d",
+                  "80b383060737a0a556344cd09bb401e6d1bf26f9",
+                  "91d8960e56f38cfc2d8f9a2b6106801b5ba3e010",
+                  "832b3ddd6e66dec78de64c3ceae677d353dd1a4e",
+                  "b25fb740d0bdb56faaaceea1dab8df40de5f5caf",
+                  "038f9ceefc1ad41d5768c308f06508112dd940d8",
+                  "260d35f001fb237ad720bb1ceea9aa538a9584f3",
+                  "a495310072dc56ea7ef7a507216d92ac7e561785",
+                  "19eed3e71800a280c4aa3ee4e8b8ffebc558168d",
+                  "65ebd004af93abcd1d0e2457a752261544088a5e")
+
+
+## Get a list of contaminants (more abundant in controls than in any
+## normal samples)
+read_tsv(input) %>%
+    select(starts_with("YY"), OTU, starts_with("T"), -total, -taxonomy) %>%
+    gather(key = "samples", value = "reads", -OTU) %>%
+    mutate(samples = str_replace(samples, "^YY.*", "sample")) %>%
+    mutate(samples = str_replace(samples, "^[tT].*", "control")) %>%
+    group_by(OTU, samples) %>%
+    summarize(max = max(reads)) %>%
+    ungroup() %>%
+    group_by(OTU) %>%
+    filter(max >= max(max) & max > 0) %>%
+    filter(samples == "control") %>%
+    ungroup() %>%
+    select(OTU) %>%
+    pull() -> my_contaminants
+    
+####16 complet
+## éliminer les séquences contaminantes : plantes, contaminants et no
+## hit, si besoin ajouter les autres OTU contaminants
+
+read_tsv(input) %>%
+    filter(! OTU %in% my_contaminants) %>%
+    filter(! amplicon %in% contaminants) %>%
+    filter(! grepl("No_hit|Nocardiaceae|Chloroplast|Mitochondria", taxonomy)) %>%
+    select(starts_with("YY"), OTU) %>%
+    gather(key = "samples", value = "reads", -OTU) %>%
+    group_by(samples) %>%
+    filter(sum(reads) >= min_sample_size) %>%
+    ungroup() %>%
+    separate(samples, c("samples", "lib_number"), sep = "_") %>%  # 'YYM1-aT_S1' -> 'YYM1-aT' 'S1'
+    separate(samples, c("plots", "replicates"), sep = "-") %>%  # 'YYM1-aT' -> 'YYM1' 'aT' (field name and plant id + compartment)
+    mutate(compartments = str_replace(replicates, "[[:lower:]]", "")) %>%  # 'aT' -> 'T' (compartment)
+    mutate(replicates = str_replace(replicates, "[[:upper:]]", "")) %>%  # 'aT' -> 'a' (plant id)
+    mutate(replicates = str_to_upper(replicates)) %>%
+    unite(plots, compartments, col = "samples", sep = "-") %>%  # 'YYM1' + 'T' -> 'YYM1-T'
+      count(OTU, samples, replicates, wt = reads) %>%  # merge samples with the same names
+    group_by(OTU, samples) %>%
+    mutate(n_replicates = n())  %>%  # calculate the number of plant per field
+    filter(n > 0) %>%  # remove the OTU with 0 read per field
+    mutate(n_occur = n()) %>%  # calculate the number of plant positive  per field for each OTU
+    ungroup()  %>%
+    mutate(ratio= n_occur/n_replicates) %>%  # calculate the prevalence for each OTU in each field 
+    separate(samples, c("plots", "compartments"), sep = "-") %>%  # separate column sample into two columns : field and plant compartment
+    unite(plots, replicates, col = "samples", sep = "-") %>%  # rewrite the initial sample name
+    unite(samples, compartments, col = "samples", sep = "") %>%
+   # unite(samples, lib_number, col = "samples", sep = "_") %>%
+    mutate(removed_otu = replace(n_occur, which(ratio <= 0.5), 0)) %>%  # filter OTU presents in more than 50% of sample at the field level 1/3
+    mutate(removed_otu = replace(removed_otu, which(ratio > 0.5), 1)) %>%  # filter OTU presents in more than 50% of sample at the field level 2/3
+    mutate(reads= removed_otu * n) %>%  # filter OTU presents in more than 50% of sample at the field level 3/3
+    distinct(OTU, samples, reads) %>%  # extract only OTU samples and reads columns
+    group_by(samples) %>%
+    filter(sum(reads) >= min_sample_size)%>%  # some samples are now below our threshold
+    ungroup() %>%
+    group_by(OTU) %>% 
+    filter(sum(reads) >= 1) %>% # remove OTU with 0 reads
+    ungroup() %>%
+    spread(samples, reads) %>%  # redo the otu table after "denoising"
+    replace(is.na(.), 0) %>%  # replace Na by 0
+    rename(OTU_ID = OTU) -> otu_data
+
+
+  
+###16s stems
+
+
+read_tsv(input) %>%
+    filter(! OTU %in% my_contaminants) %>%
+    filter(! amplicon %in% contaminants) %>%
+    filter(! grepl("No_hit|Nocardiaceae|Chloroplast|Mitochondria", taxonomy)) %>% 
+    select(starts_with("YY"), OTU) %>%
+    gather(key = "samples", value = "reads", -OTU) %>%
+    group_by(samples) %>%
+    filter(sum(reads) >= min_sample_size) %>%
+    ungroup() %>%
+    separate(samples, c("samples", "lib_number"), sep = "_") %>%  # 'YYM1-aT_S1' -> 'YYM1-aT' 'S1'
+    separate(samples, c("plots", "replicates"), sep = "-") %>%  # 'YYM1-aT' -> 'YYM1' 'aT' (field name and plant id + compartment)
+    mutate(compartments = str_replace(replicates, "[[:lower:]]", "")) %>%  # 'aT' -> 'T' (compartment)
+    mutate(replicates = str_replace(replicates, "[[:upper:]]", "")) %>%  # 'aT' -> 'a' (plant id)
+    mutate(replicates = str_to_upper(replicates)) %>%
+    unite(plots, compartments, col = "samples", sep = "-") %>%  # 'YYM1' + 'T' -> 'YYM1-T'
+  filter(str_detect(samples,"T$")) %>% 
+  mutate(samples= str_replace(samples,"T$","")) %>% 
+    count(OTU, samples, replicates, wt = reads) %>%  # merge samples with the same names
+    group_by(OTU, samples) %>%
+    mutate(n_replicates = n())  %>%  # calculate the number of plant per field
+    filter(n > 0) %>%  # remove the OTU with 0 read per field
+    mutate(n_occur = n()) %>%  # calculate the number of plant positive  per field for each OTU
+    ungroup()  %>%
+    mutate(ratio= n_occur/n_replicates) %>%  # calculate the prevalence for each OTU in each field 
+    separate(samples, c("plots", "compartments"), sep = "-") %>%  # separate column sample into two columns : field and plant compartment
+    unite(plots, replicates, col = "samples", sep = "-") %>%  # rewrite the initial sample name
+    unite(samples, compartments, col = "samples", sep = "") %>%
+   # unite(samples, lib_number, col = "samples", sep = "_") %>%
+    mutate(removed_otu = replace(n_occur, which(ratio <= 0.5), 0)) %>%  # filter OTU presents in more than 50% of sample at the field level 1/3
+    mutate(removed_otu = replace(removed_otu, which(ratio > 0.5), 1)) %>%  # filter OTU presents in more than 50% of sample at the field level 2/3
+    mutate(reads= removed_otu * n) %>%  # filter OTU presents in more than 50% of sample at the field level 3/3
+    distinct(OTU, samples, reads) %>%  # extract only OTU samples and reads columns
+    group_by(samples) %>%
+    filter(sum(reads) >= min_sample_size)%>%  # some samples are now below our threshold
+    ungroup() %>%
+    group_by(OTU) %>% 
+    filter(sum(reads) >= 1) %>% # remove OTU with 0 reads
+    ungroup() %>%
+    spread(samples, reads) %>%  # redo the otu table after "denoising"
+    replace(is.na(.), 0) %>%  # replace Na by 0
+    rename(OTU_ID = OTU) -> otu_data_tige
+ 
+
+read_tsv(input) %>%
+    filter(! OTU %in% my_contaminants) %>%
+    filter(! amplicon %in% contaminants) %>%
+    filter(! grepl("No_hit|Nocardiaceae|Chloroplast|Mitochondria", taxonomy)) %>% 
+    select(starts_with("YY"), OTU) %>%
+    gather(key = "samples", value = "reads", -OTU) %>%
+    group_by(samples) %>%
+    filter(sum(reads) >= min_sample_size) %>%
+    ungroup() %>%
+    separate(samples, c("samples", "lib_number"), sep = "_") %>%  # 'YYM1-aT_S1' -> 'YYM1-aT' 'S1'
+    separate(samples, c("plots", "replicates"), sep = "-") %>%  # 'YYM1-aT' -> 'YYM1' 'aT' (field name and plant id + compartment)
+    mutate(compartments = str_replace(replicates, "[[:lower:]]", "")) %>%  # 'aT' -> 'T' (compartment)
+    mutate(replicates = str_replace(replicates, "[[:upper:]]", "")) %>%  # 'aT' -> 'a' (plant id)
+    mutate(replicates = str_to_upper(replicates)) %>%
+    unite(plots, compartments, col = "samples", sep = "-") %>%  # 'YYM1' + 'T' -> 'YYM1-T'
+  filter(str_detect(samples,"R$")) %>% 
+  mutate(samples= str_replace(samples,"R$","")) %>% 
+    count(OTU, samples, replicates, wt = reads) %>%  # merge samples with the same names
+    group_by(OTU, samples) %>%
+    mutate(n_replicates = n())  %>%  # calculate the number of plant per field
+    filter(n > 0) %>%  # remove the OTU with 0 read per field
+    mutate(n_occur = n()) %>%  # calculate the number of plant positive  per field for each OTU
+    ungroup()  %>%
+    mutate(ratio= n_occur/n_replicates) %>%  # calculate the prevalence for each OTU in each field 
+    separate(samples, c("plots", "compartments"), sep = "-") %>%  # separate column sample into two columns : field and plant compartment
+    unite(plots, replicates, col = "samples", sep = "-") %>%  # rewrite the initial sample name
+    unite(samples, compartments, col = "samples", sep = "") %>%
+   # unite(samples, lib_number, col = "samples", sep = "_") %>%
+    mutate(removed_otu = replace(n_occur, which(ratio <= 0.5), 0)) %>%  # filter OTU presents in more than 50% of sample at the field level 1/3
+    mutate(removed_otu = replace(removed_otu, which(ratio > 0.5), 1)) %>%  # filter OTU presents in more than 50% of sample at the field level 2/3
+    mutate(reads= removed_otu * n) %>%  # filter OTU presents in more than 50% of sample at the field level 3/3
+    distinct(OTU, samples, reads) %>%  # extract only OTU samples and reads columns
+    group_by(samples) %>%
+    filter(sum(reads) >= min_sample_size)%>%  # some samples are now below our threshold
+    ungroup() %>%
+    group_by(OTU) %>% 
+    filter(sum(reads) >= 1) %>% # remove OTU with 0 reads
+    ungroup() %>%
+    spread(samples, reads) %>%  # redo the otu table after "denoising"
+    replace(is.na(.), 0) %>%  # replace Na by 0
+    rename(OTU_ID = OTU) -> otu_data_rac
+
+
+# tax table
+
+read_tsv(input) %>%
+    select(OTU, taxonomy) %>%
+    separate(taxonomy, taxonomic_levels,
+             sep = "[|]", fill = "right", extra = "drop") %>%
+    mutate_if(is.character,
+              funs(str_replace(.,
+                               "unknown|uncultured|unidentified|\\*",
+                               replacement = NA_character_))) %>%
+    mutate(taxonomy = str_glue_data(.,
+                                    "Root;k__{Kingdom}",
+                                    ";p__{Phylum}",
+                                    ";c__{Class}",
+                                    ";o__{Order}",
+                                    ";f__{Family}",
+                                    ";g__{Genus}",
+                                    ";s__{Species}",
+                                    sep = "|")) %>%
+    mutate(taxonomy = as.character(taxonomy)) %>%
+    rename(OTU_ID = OTU)->tax_data
+tax_data %>% 
+    semi_join(otu_data_rac, by = "OTU_ID") -> tax_data_rac  # keep only OTU present in otu_data
+tax_data %>% 
+    semi_join(otu_data_tige, by = "OTU_ID") -> tax_data_tige
+
+#metadata
+
+read_tsv(metadata) %>%
+    filter(! str_detect(genotype, "outlier|Japonica")) %>% 
+    filter(! str_detect(field, "T4")) %>% 
+    filter(!str_detect(genotype_group, "unknown")) %>%
+    separate(SampleID, c("SampleID", "lib_number"), sep = "_")%>%
+    mutate(SampleID = str_to_upper(SampleID)) -> sample_data 
+sample_data[!duplicated(sample_data$SampleID),]->sample_data
+sample_data%>% 
+  filter(str_detect(SampleID,"T$")) %>% 
+  mutate(SampleID= str_replace(SampleID,"T$",""))->sample_data_tige
+sample_data%>% 
+  filter(str_detect(SampleID,"R$")) %>% 
+  mutate(SampleID= str_replace(SampleID,"R$",""))->sample_data_rac
+
+```
+export otu table
+```{r}
+otu_data %>% 
+  inner_join(tax_data,by="OTU_ID") %>% 
+  select(-taxonomy) %>% 
+  write.csv(file = "bacterial_communities_otu_table.csv")
+
+```
+
+
+make phyloseq objects
+
+```{r message=FALSE, warning=FALSE, include=FALSE, paged.print=FALSE}
+tree <- "seq.newick"
+read_tree(tree) ->tree
+## 16s 
+otu_data %>% 
+  mutate(OTU_ID=as.character(OTU_ID)) %>%
+  column_to_rownames(var = "OTU_ID") %>% 
+  as.matrix() -> otu
+tax_data %>% 
+ mutate(OTU_ID=as.character(OTU_ID)) %>%
+column_to_rownames(var = "OTU_ID") %>% 
+  select(-Kingdom) %>% 
+as.matrix()->tax
+rownames(sample_data) <- sample_data$SampleID
+object_phylo.16s <- phyloseq(otu_table(otu, taxa_are_rows = TRUE), tax_table(tax), sample_data(sample_data))
+phy_tree(object_phylo.16s) <- tree
+## rarefaction
+phylo_rare.16s = rarefy_even_depth(object_phylo.16s)
+
+
+##### 16s stems
+ otu_data_tige %>% 
+  mutate(OTU_ID=as.character(OTU_ID)) %>%
+  column_to_rownames(var = "OTU_ID") %>% 
+  as.matrix() -> otu_tige
+
+tax_data_tige %>% 
+  mutate(OTU_ID=as.character(OTU_ID)) %>%
+  column_to_rownames(var = "OTU_ID") %>% 
+  select(-Kingdom) %>% 
+  as.matrix()->tax_tige
+
+sample_data_tige %>% 
+  column_to_rownames(var = "SampleID")->sample_data_tige
+
+object_phylo.16s_tige <- phyloseq(otu_table(otu_tige, taxa_are_rows = TRUE), tax_table(tax_tige), sample_data(sample_data_tige))
+phy_tree(object_phylo.16s_tige) <- tree
+## rarefaction
+phylo_rare.16s_tige = rarefy_even_depth(object_phylo.16s_tige)
+
+##### 16s roots
+
+ otu_data_rac %>% 
+  mutate(OTU_ID=as.character(OTU_ID)) %>%
+  column_to_rownames(var = "OTU_ID") %>% 
+  as.matrix() -> otu_rac
+
+tax_data_rac %>% 
+  mutate(OTU_ID=as.character(OTU_ID)) %>%
+  column_to_rownames(var = "OTU_ID") %>% 
+  select(-Kingdom) %>% 
+  as.matrix()->tax_rac
+
+sample_data_rac %>% 
+  column_to_rownames(var = "SampleID")->sample_data_rac
+
+object_phylo.16s_rac <- phyloseq(otu_table(otu_rac, taxa_are_rows = TRUE), tax_table(tax_rac), sample_data(sample_data_rac))
+phy_tree(object_phylo.16s_rac) <- tree
+## rarefaction
+phylo_rare.16s_rac = rarefy_even_depth(object_phylo.16s_rac)
+```
+
+
+I) **alpha diversity with phyloseq**
+----------------------------------------
+
+- 1 Bacterial community stem (alpha diversity)
+-----------------------------------------------
+**diversité alpha k=3** 
+```{r echo=FALSE, message=FALSE, warning=FALSE, paged.print=FALSE}
+
+
+p <- plot_richness(phylo_rare.16s_tige, x="genotype_group", color="genotype_group", measures=c("Observed","Shannon"), nrow = 1)+   
+  scale_color_manual(values=c("#099A4D","#8D4725"), name="Rice genotype group")
+
+
+## Alpha-div Stats 
+
+p$data %>% 
+  filter(grepl("Shannon", variable))->shannon_result
+p$data %>% 
+  filter(grepl("Observed", variable)) %>%
+  rename(Observed=value ) %>% 
+  select(lib_number,Observed) %>% 
+  inner_join(shannon_result, by="lib_number") %>% 
+  rename(Shannon=value) %>% 
+  select(-variable)->alpha_div_result
+
+
+anova_result_obs<-aov(Observed ~ group_modern_landraces, data=alpha_div_result)
+anova_result_shan<-aov(Shannon~ group_modern_landraces, data=alpha_div_result)
+
+tukey_result_obs<- HSD.test(anova_result_obs, "group_modern_landraces", group=TRUE,alpha=0.05) 
+print(tukey_result_obs)
+
+tukey_result_shan<- HSD.test(anova_result_shan, "group_modern_landraces", group=TRUE,alpha=0.05) 
+print(tukey_result_shan)
+
+
+# PLOT alpha diversity
+ p$data %>%
+        group_by(variable,group_modern_landraces) %>%
+        summarize(max = max(value)) %>%
+        mutate(max= max*1.1) %>% 
+        unite(variable,group_modern_landraces , col = "key", sep = "_")->label
+
+tukey_result_shan$groups %>%
+  rownames_to_column(var="group_modern_landraces") %>% 
+  mutate(variable = str_replace(groups, ".", "Shannon")) %>% 
+  rename(value=Shannon)->stat_group
+
+tukey_result_obs$groups %>%
+  rownames_to_column(var="group_modern_landraces") %>% 
+  mutate(variable = str_replace(groups, ".", "Observed")) %>%
+  rename(value=Observed) %>% 
+  bind_rows(stat_group) %>% 
+  unite(variable,group_modern_landraces , col = "key", sep = "_", remove = FALSE) %>% 
+  inner_join(label) %>% 
+  select(-key,-value) %>% 
+  rename(value=max) ->stat_group
+
+ggplot(p$data, aes(x = group_modern_landraces, y = value,colour=group_modern_landraces,shape=group_modern_landraces)) +
+      geom_violin() +
+      facet_grid(variable ~ tissu,drop=T,scale="free",space="fixed") +
+  geom_jitter(shape=16, position=position_jitter(0.2)) +
+  ylab("Diversity index")  + xlab(NULL) + theme_bw() +  theme(axis.text=element_text(size=14),axis.title=element_text(size=14,face="bold")) +   
+     scale_color_manual(values=c("#099A4D","#8D4725"), name="Rice genotype group")+
+      geom_text(data = stat_group, aes(x = group_modern_landraces, y = value, label = groups), nudge_y = 0.5,
+    size = 5,
+    hjust = 0.5,
+    color = "black")
+ 
+ggsave('Rice_stems_bacterial_communities_alpha_div_K3.pdf')
+```
+
+**diversité alpha k=8** 
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, paged.print=FALSE}
+#####diversité alpha 
+
+p <- plot_richness(phylo_rare.16s_tige, x="K8", color="K8", measures=c("Observed","Shannon"), nrow = 1)+   
+  scale_color_manual(values=c("#F8993A","#0F9D48","#562D99","#794FA0","#8C4720","#929336"), name="Rice genotype group K=8")
+
+## Alpha-div Stats 
+p$data %>% 
+  filter(grepl("Shannon", variable))->shannon_result
+p$data %>% 
+  filter(grepl("Observed", variable)) %>%
+  rename(Observed=value ) %>% 
+  select(lib_number,Observed) %>% 
+  inner_join(shannon_result, by="lib_number") %>% 
+  rename(Shannon=value) %>% 
+  select(-variable)->alpha_div_result
+
+anova_result_obs<-aov(Observed ~ K8, data=alpha_div_result)
+anova_result_shan<-aov( Shannon~ K8, data=alpha_div_result)
+
+tukey_result_obs<- HSD.test(anova_result_obs, "K8", group=TRUE,alpha=0.05) 
+print(tukey_result_obs)
+
+tukey_result_shan<- HSD.test(anova_result_shan, "K8", group=TRUE,alpha=0.05) 
+print(tukey_result_shan)
+
+
+# PLOT alpha diversity
+ p$data %>%
+        group_by(variable,K8) %>%
+        summarize(max = max(value)) %>%
+        mutate(max= max*1.1) %>% 
+        unite(variable,K8 , col = "key", sep = "_")->label
+
+tukey_result_shan$groups %>%
+  rownames_to_column(var="K8") %>% 
+  mutate(variable = str_replace(groups, ".*", "Shannon")) %>% 
+  rename(value=Shannon)->stat_group
+
+tukey_result_obs$groups %>%
+  rownames_to_column(var="K8") %>% 
+  mutate(variable = str_replace(groups, ".*", "Observed")) %>%
+  rename(value=Observed) %>% 
+  bind_rows(stat_group) %>% 
+  unite(variable,K8 , col = "key", sep = "_", remove = FALSE) %>% 
+  inner_join(label) %>% 
+  select(-key,-value) %>% 
+  rename(value=max) ->stat_group
+
+ggplot(p$data, aes(x = K8, y = value,colour=K8,shape=K8)) +
+      geom_violin() +
+      facet_grid(variable ~ tissu,drop=T,scale="free",space="fixed") +
+  geom_jitter(shape=16, position=position_jitter(0.2)) +
+  ylab("Diversity index")  + xlab(NULL) + theme_bw() +  
+  theme(axis.text.x = element_text(face="bold", 
+                           size=10, angle=90),
+          axis.text.y = element_text(face="bold", 
+                           size=10)) +   
+     scale_color_manual(values=c("#F8993A","#0F9D48","#562D99","#794FA0","#8C4720","#929336"), name="Rice genotype group")+
+      geom_text(data = stat_group, aes(x = K8, y = value, label = groups), nudge_y = 0.5,
+    size = 4,
+    hjust = 0.5,
+    color = "black")
+ggsave('Rice_stems_bacterial_communities_alpha_div_K8.pdf')
+```
+
+
+- 1 bacterial community root (alpha diversity)
+-----------------------------------------------
+
+** alpha diversity k=3** 
+```{r echo=FALSE, message=FALSE, warning=FALSE, paged.print=FALSE}
+
+
+p <- plot_richness(phylo_rare.16s_rac, x="genotype_group", color="genotype_group", measures=c("Observed","Shannon"), nrow = 1)+   
+  scale_color_manual(values=c("#099A4D","#8D4725"), name="Rice genotype group")
+
+
+## Export the alpha div values
+p$data %>% 
+  filter(grepl("Shannon", variable))->shannon_result
+p$data %>% 
+  filter(grepl("Observed", variable)) %>%
+  rename(Observed=value ) %>% 
+  select(lib_number,Observed) %>% 
+  inner_join(shannon_result, by="lib_number") %>% 
+  rename(Shannon=value) %>% 
+  select(-variable)->alpha_div_result
+
+## Alpha-div Stats 
+# genotype
+anova_result_obs<-aov(Observed ~ group_modern_landraces, data=alpha_div_result)
+anova_result_shan<-aov( Shannon~ group_modern_landraces, data=alpha_div_result)
+
+tukey_result_obs<- HSD.test(anova_result_obs, "group_modern_landraces", group=TRUE,alpha=0.05) 
+print(tukey_result_obs)
+
+tukey_result_shan<- HSD.test(anova_result_shan, "group_modern_landraces", group=TRUE,alpha=0.05) 
+print(tukey_result_shan)
+
+# PLOT alpha diversity
+ p$data %>%
+        group_by(variable,group_modern_landraces) %>%
+        summarize(max = max(value)) %>%
+        mutate(max= max*1.1) %>% 
+        unite(variable,group_modern_landraces , col = "key", sep = "_")->label
+
+tukey_result_shan$groups %>%
+  rownames_to_column(var="group_modern_landraces") %>% 
+  mutate(variable = str_replace(groups, ".", "Shannon")) %>% 
+  rename(value=Shannon)->stat_group
+
+tukey_result_obs$groups %>%
+  rownames_to_column(var="group_modern_landraces") %>% 
+  mutate(variable = str_replace(groups, ".", "Observed")) %>%
+  rename(value=Observed) %>% 
+  bind_rows(stat_group) %>% 
+  unite(variable,group_modern_landraces , col = "key", sep = "_", remove = FALSE) %>% 
+  inner_join(label) %>% 
+  select(-key,-value) %>% 
+  rename(value=max) ->stat_group
+
+ggplot(p$data, aes(x = group_modern_landraces, y = value,colour=group_modern_landraces,shape=group_modern_landraces)) +
+      geom_violin() +
+      facet_grid(variable ~ tissu,drop=T,scale="free",space="fixed") +
+  geom_jitter(shape=16, position=position_jitter(0.2)) +
+  ylab("Diversity index")  + xlab(NULL) + theme_bw() +  theme(axis.text=element_text(size=14),axis.title=element_text(size=14,face="bold")) +   
+     scale_color_manual(values=c("#099A4D","#8D4725"), name="Rice genotype group")+
+      geom_text(data = stat_group, aes(x = group_modern_landraces, y = value, label = groups), nudge_y = 0.5,
+    size = 5,
+    hjust = 0.5,
+    color = "black")
+
+ggsave('Rice_roots_bacterial_communities_alpha_div_K3.pdf')
+```
+
+** alpha diversity k=8** 
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, paged.print=FALSE}
+
+p <- plot_richness(phylo_rare.16s_rac, x="K8", color="K8", measures=c("Observed","Shannon"), nrow = 1)+   
+  scale_color_manual(values=c("#F8993A","#0F9D48","#562D99","#794FA0","#8C4720","#929336"), name="Rice genotype group K=8")
+
+## Alpha-div Stats 
+
+p$data %>% 
+  filter(grepl("Shannon", variable))->shannon_result
+p$data %>% 
+  filter(grepl("Observed", variable)) %>%
+  rename(Observed=value ) %>% 
+  select(lib_number,Observed) %>% 
+  inner_join(shannon_result, by="lib_number") %>% 
+  rename(Shannon=value) %>% 
+  select(-variable)->alpha_div_result
+
+anova_result_obs<-aov(Observed ~ K8, data=alpha_div_result)
+anova_result_shan<-aov( Shannon~ K8, data=alpha_div_result)
+
+tukey_result_obs<- HSD.test(anova_result_obs, "K8", group=TRUE,alpha=0.05) 
+print(tukey_result_obs)
+tukey_result_shan<- HSD.test(anova_result_shan, "K8", group=TRUE,alpha=0.05) 
+print(tukey_result_shan)
+
+# PLOT alpha diversity
+ p$data %>%
+        group_by(variable,K8) %>%
+        summarize(max = max(value)) %>%
+        mutate(max= max*1.1) %>% 
+        unite(variable,K8 , col = "key", sep = "_")->label
+
+tukey_result_shan$groups %>%
+  rownames_to_column(var="K8") %>% 
+  mutate(variable = str_replace(groups, ".*", "Shannon")) %>% 
+  rename(value=Shannon)->stat_group
+
+tukey_result_obs$groups %>%
+  rownames_to_column(var="K8") %>% 
+  mutate(variable = str_replace(groups, ".*", "Observed")) %>%
+  rename(value=Observed) %>% 
+  bind_rows(stat_group) %>% 
+  unite(variable,K8 , col = "key", sep = "_", remove = FALSE) %>% 
+  inner_join(label) %>% 
+  select(-key,-value) %>% 
+  rename(value=max) ->stat_group
+
+ggplot(p$data, aes(x = K8, y = value,colour=K8,shape=K8)) +
+      geom_violin() +
+      facet_grid(variable ~ tissu,drop=T,scale="free",space="fixed") +
+  geom_jitter(shape=16, position=position_jitter(0.2)) +
+  ylab("Diversity index")  + xlab(NULL) + theme_bw() +   theme(axis.text.x = element_text(face="bold", 
+                           size=10, angle=90),
+          axis.text.y = element_text(face="bold", 
+                           size=10)) +   
+     scale_color_manual(values=c("#F8993A","#0F9D48","#562D99","#794FA0","#8C4720","#929336"), name="Rice genotype group")+
+      geom_text(data = stat_group, aes(x = K8, y = value, label = groups), nudge_y = 0.5,
+    size = 4,
+    hjust = 0.5,
+    color = "black")
+
+ggsave('Rice_roots_bacterial_communities_alpha_div_K8.pdf')
+
+```
+
+
+
+ Unweighted unifrac distances root : permanova and PcoA
+```{r echo=FALSE, message=FALSE, warning=FALSE, paged.print=FALSE}
+
+distance(phylo_rare.16s_rac, method="unifrac", type="K8")->dist_rac
+
+ord <- ordinate(phylo_rare.16s_rac,"PCoA",dist_rac)
+
+# PERMANOVA
+adonis(dist_rac ~ get_variable(phylo_rare.16s_rac, "altitude_group")
+       + get_variable(phylo_rare.16s_rac, "SRBSDV")
+       + get_variable(phylo_rare.16s_rac, "K8"),permutations = 10000)$aov.tab
+
+plot_ordination(phylo_rare.16s_rac, 
+                ord,
+                color = "K8", 
+                title = "Rice roots bacterial communities : PCoA UniFrac K8" ) +   theme_bw()+ scale_color_manual(values=c("#F8993A", "#0F9D48","#562D99","#794FA0","#8C4720","#929336"), name="Rice genotype group K8") + theme(text = element_text(size = 12)) + geom_point(size = 2) + geom_text(mapping = aes(label = field), size = 3, vjust = 1.5)
+
+
+
+rownames_to_column(sample_data_rac,var="SampleID" )->sample_data2
+
+ord$vectors %>% 
+  as.data.frame() %>%
+  rownames_to_column(var="SampleID" ) %>% 
+  select(Axis.1,Axis.2,SampleID)-> ord2
+
+data.scores <- left_join(ord2, sample_data2, by = "SampleID")
+
+cent <- aggregate(cbind(Axis.1,Axis.2)~K8, data = data.scores, FUN = mean)
+seg <- merge(data.scores, setNames(cent, c("K8", "Axis.1.x", "Axis.2.x")),
+             by = "K8", sort = FALSE)
+
+output <-"Rice_roots_bacterial_communities_PCoA_unifrac_centroid_K8.pdf"
+
+cPalette <- c("#F8993A", "#0F9D48","#562D99","#794FA0","#8C4720","#929336" ) 
+
+ggplot(data = data.scores, aes(x = Axis.1, y = Axis.2)) +
+  geom_segment(data = seg, mapping = aes(xend = Axis.1.x, yend = Axis.2.x, 
+                                         color = K8)) +
+  geom_point(aes(color = K8), size = 2) +
+  geom_point(data = cent, aes(color = K8), size = 10) +
+  theme_bw(base_size = 16) +
+  theme(legend.title = element_blank(),
+        legend.position = "bottom",
+        legend.text = element_text(size = 10),
+        aspect.ratio = 1) +
+  ggtitle("") +
+  ylab("Diversity index")  + xlab(NULL)+
+  scale_colour_manual(values = cPalette) +
+  coord_equal()
+
+
+width <- 9
+height <- 9
+
+ggsave(file = output, width = width , height = height)
+
+
+#pariwaise permanova
+
+otu_rac %>% 
+  t() %>% 
+  data.frame() %>% 
+  rownames_to_column(var="ID") %>% 
+  select(ID)->ID
+
+sample_data_rac %>% 
+  rownames_to_column(var="ID") %>% 
+  inner_join(ID) %>% 
+  column_to_rownames(var="ID") %>% 
+  select(K8)->condition
+
+
+pairwise.adonis(dist_rac,condition$K8,sim.function = "vegdist", perm = 9999)->pairwise_permanova_roots_16s_unwunifrac
+
+
+```
+
+Unweighted unifrac distances stem : permanova and PcoA
+```{r echo=FALSE, message=FALSE, warning=FALSE, paged.print=FALSE}
+
+distance(phylo_rare.16s_tige, method="unifrac", type="K8")->dist_tige
+
+
+ord <- ordinate(phylo_rare.16s_tige,"PCoA",dist_tige)
+
+# PERMANOVA
+adonis(dist_tige ~ get_variable(phylo_rare.16s_tige, "altitude_group")
+       + get_variable(phylo_rare.16s_tige, "SRBSDV")
+       + get_variable(phylo_rare.16s_tige, "K8"),permutations = 10000)$aov.tab
+
+
+plot_ordination(phylo_rare.16s_tige, 
+                ord,
+                color = "K8", 
+                title = "Rice stems bacterial communities : PCoA UniFrac" ) + 
+theme_bw()+ scale_color_manual(values=c("#F8993A", "#0F9D48","#562D99","#794FA0","#8C4720","#929336" ), name="Rice genotype group K8") + theme(text = element_text(size = 12)) + geom_point(size = 2) + geom_text(mapping = aes(label = field), size = 3, vjust = 1.5) 
+
+
+
+
+rownames_to_column(sample_data_rac,var="SampleID" )->sample_data2
+
+ord$vectors %>% 
+  as.data.frame() %>%
+  rownames_to_column(var="SampleID" ) %>% 
+  select(Axis.1,Axis.2,SampleID)-> ord2
+
+data.scores <- left_join(ord2, sample_data2, by = "SampleID")
+
+#{{creation of variable for spider/centroid representation}}
+cent <- aggregate(cbind(Axis.1,Axis.2)~K8, data = data.scores, FUN = mean)
+seg <- merge(data.scores, setNames(cent, c("K8", "Axis.1.x", "Axis.2.x")),
+             by = "K8", sort = FALSE)
+
+output <-"Rice_stems_bacterial_communities_PCoA_unifrac_centroid_K8.pdf"
+
+cPalette <- c("#F8993A", "#0F9D48","#562D99","#794FA0","#8C4720","#929336" ) 
+
+ggplot(data = data.scores, aes(x = Axis.1, y = Axis.2)) +
+  geom_segment(data = seg, mapping = aes(xend = Axis.1.x, yend = Axis.2.x, 
+                                         color = K8)) +
+  geom_point(aes(color = K8), size = 2) +
+  geom_point(data = cent, aes(color = K8), size = 10) +
+  
+  theme_bw(base_size = 16) +
+  theme(legend.title = element_blank(),
+        legend.position = "bottom",
+        legend.text = element_text(size = 10),
+        aspect.ratio = 1) +
+  ggtitle("") +
+  scale_colour_manual(values = cPalette) +
+  coord_equal()
+
+width <- 9
+height <- 9
+
+ggsave(file = output, width = width , height = height)
+
+#pariwaise permanova
+
+otu_tige %>% 
+  t() %>% 
+  data.frame() %>% 
+  rownames_to_column(var="ID") %>% 
+  select(ID)->ID
+
+sample_data_tige %>% 
+  rownames_to_column(var="ID") %>% 
+  inner_join(ID) %>% 
+  column_to_rownames(var="ID") %>% 
+  select(K8)->condition
+  
+pairwise.adonis(dist_tige,condition$K8,sim.function = "vegdist", perm = 9999)->pairwise_permanova_stems_16s_unwunifrac
+
+```
+Permanova SRBSDV factor k=8 (root and stem)
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, paged.print=FALSE}
+# PERMANOVA
+adonis(dist_rac ~ get_variable(phylo_rare.16s_rac, "altitude_group")
+       + get_variable(phylo_rare.16s_rac, "K8")
+       + get_variable(phylo_rare.16s_rac, "SRBSDV"),permutations = 10000)$aov.tab
+# PERMANOVA
+adonis(dist_tige ~ get_variable(phylo_rare.16s_tige, "altitude_group")
+       + get_variable(phylo_rare.16s_tige, "K8")
+       + get_variable(phylo_rare.16s_tige, "SRBSDV"),permutations = 10000)$aov.tab
+```
+
+
+
+
+** weighted unifrac disyances roots permanova and PcoA**
+--------------------------------------------------------------------
+```{r echo=FALSE, message=FALSE, warning=FALSE, paged.print=FALSE}
+
+distance(phylo_rare.16s_rac, method="wunifrac", type="K8")->dist_rac
+
+
+ord <- ordinate(phylo_rare.16s_rac,"PCoA",dist_rac)
+
+
+# PERMANOVA
+adonis(dist_rac ~ get_variable(phylo_rare.16s_rac, "altitude_group")
+       + get_variable(phylo_rare.16s_rac, "SRBSDV")
+       + get_variable(phylo_rare.16s_rac, "K8"),permutations = 10000)$aov.tab
+
+
+plot_ordination(phylo_rare.16s_rac, 
+                ord,
+                color = "K8", 
+                title = "Rice roots bacterial communities : PCoA weighted UniFrac K8" ) + 
+  theme_bw()+ scale_color_manual(values=c("#F8993A", "#0F9D48","#562D99","#794FA0","#8C4720","#929336"), name="Rice genotype group K8") + theme(text = element_text(size = 12)) + geom_point(size = 2) + geom_text(mapping = aes(label = field), size = 3, vjust = 1.5)
+
+
+rownames_to_column(sample_data_rac,var="SampleID" )->sample_data2
+
+ord$vectors %>% 
+  as.data.frame() %>%
+  rownames_to_column(var="SampleID" ) %>% 
+  select(Axis.1,Axis.2,SampleID)-> ord2
+
+data.scores <- left_join(ord2, sample_data2, by = "SampleID")
+
+cent <- aggregate(cbind(Axis.1,Axis.2)~K8, data = data.scores, FUN = mean)
+seg <- merge(data.scores, setNames(cent, c("K8", "Axis.1.x", "Axis.2.x")),
+             by = "K8", sort = FALSE)
+
+output <-"Rice_roots_bacterial_communities_PCoA_weighted_unifrac_centroid_K8.pdf"
+
+cPalette <- c("#F8993A", "#0F9D48","#562D99","#794FA0","#8C4720","#929336" ) 
+
+ggplot(data = data.scores, aes(x = Axis.1, y = Axis.2)) +
+  geom_segment(data = seg, mapping = aes(xend = Axis.1.x, yend = Axis.2.x, 
+                                         color = K8)) +
+  geom_point(aes(color = K8), size = 2) +
+  geom_point(data = cent, aes(color = K8), size = 10) +
+  theme_bw(base_size = 16) +
+  theme(legend.title = element_blank(),
+        legend.position = "bottom",
+        legend.text = element_text(size = 10),
+        aspect.ratio = 1) +
+  ggtitle("") +
+  scale_colour_manual(values = cPalette) +
+  coord_equal()
+
+width <- 9
+height <- 9
+
+ggsave(file = output, width = width , height = height)
+
+#pariwaise permanova
+
+otu_rac %>% 
+  t() %>% 
+  data.frame() %>% 
+  rownames_to_column(var="ID") %>% 
+  select(ID)->ID
+
+sample_data_rac %>% 
+  rownames_to_column(var="ID") %>% 
+  inner_join(ID) %>% 
+  column_to_rownames(var="ID") %>% 
+  select(K8)->condition
+  
+pairwise.adonis(dist_rac,condition$K8,sim.function = "vegdist", perm = 9999)->pairwise_permanova_roots_16s_wunifrac
+
+```
+
+ weighted unifrac stems  permanova and PcoA
+```{r echo=FALSE, message=FALSE, warning=FALSE, paged.print=FALSE}
+
+distance(phylo_rare.16s_tige, method="wunifrac", type="K8")->dist_tige
+
+
+ord <- ordinate(phylo_rare.16s_tige,"PCoA",dist_tige)
+
+# PERMANOVA
+adonis(dist_tige ~ get_variable(phylo_rare.16s_tige, "altitude_group")
+       + get_variable(phylo_rare.16s_tige, "SRBSDV")
+       + get_variable(phylo_rare.16s_tige, "K8"),permutations = 10000)$aov.tab
+
+
+plot_ordination(phylo_rare.16s_tige, 
+                ord,
+                color = "K8", 
+                title = "Rice stems bacterial communities : PCoA weighted UniFrac" ) + 
+theme_bw()+ scale_color_manual(values=c("#F8993A", "#0F9D48","#562D99","#794FA0","#8C4720","#929336" ), name="Rice genotype group K8") + theme(text = element_text(size = 12)) + geom_point(size = 2) + geom_text(mapping = aes(label = field), size = 3, vjust = 1.5) 
+
+rownames_to_column(sample_data_rac,var="SampleID" )->sample_data2
+
+ord$vectors %>% 
+  as.data.frame() %>%
+  rownames_to_column(var="SampleID" ) %>% 
+  select(Axis.1,Axis.2,SampleID)-> ord2
+
+data.scores <- left_join(ord2, sample_data2, by = "SampleID")
+
+cent <- aggregate(cbind(Axis.1,Axis.2)~K8, data = data.scores, FUN = mean)
+seg <- merge(data.scores, setNames(cent, c("K8", "Axis.1.x", "Axis.2.x")),
+             by = "K8", sort = FALSE)
+
+output <-"Rice_stems_bacterial_communities_PCoA_weighted_unifrac_centroid_K8.pdf"
+
+cPalette <- c("#F8993A", "#0F9D48","#562D99","#794FA0","#8C4720","#929336" ) 
+ggplot(data = data.scores, aes(x = Axis.1, y = Axis.2)) +
+  geom_segment(data = seg, mapping = aes(xend = Axis.1.x, yend = Axis.2.x, 
+                                         color = K8)) +
+  geom_point(aes(color = K8), size = 2) +
+  geom_point(data = cent, aes(color = K8), size = 10) +
+  theme_bw(base_size = 16) +
+  theme(legend.title = element_blank(),
+        legend.position = "bottom",
+        legend.text = element_text(size = 10),
+        aspect.ratio = 1) +
+  ggtitle("") +
+  scale_colour_manual(values = cPalette) +
+  coord_equal()
+
+width <- 9
+height <- 9
+
+ggsave(file = output, width = width , height = height)
+
+#pariwaise permanova
+
+otu_tige %>% 
+  t() %>% 
+  data.frame() %>% 
+  rownames_to_column(var="ID") %>% 
+  select(ID)->ID
+
+sample_data_tige %>% 
+  rownames_to_column(var="ID") %>% 
+  inner_join(ID) %>% 
+  column_to_rownames(var="ID") %>% 
+  select(K8)->condition
+  
+pairwise.adonis(dist_tige,condition$K8,sim.function = "vegdist", perm = 9999)->pairwise_permanova_stems_16s_wunifrac
+
+```
+
+
+
+ITS#####ITS#####ITS#####ITS##########ITS##########ITS##########ITS##########
+
+```{r message=FALSE, warning=FALSE, include=FALSE, paged.print=FALSE}
+
+input <- "Yunnan_Rice_2016_ITS2_roots_and_stems_384_samples.OTU.filtered.table"
+metadata <- "metadataITS.txt"
+min_sample_size <- 5000
+taxonomic_levels <- c("Kingdom","Phylum", "Class",
+                      "Order", "Family", "Genus", "Species")
+dist_rice<- "dist_gbs_riz.out"
+
+
+
+## Get a list of contaminants (more abundant in controls than in any
+## normal samples)
+read_tsv(input) %>%
+    select(starts_with("YY"), OTU, starts_with("T"), -total, -taxonomy) %>%
+    gather(key = "samples", value = "reads", -OTU) %>%
+    mutate(samples = str_replace(samples, "^YY.*", "sample")) %>%
+    mutate(samples = str_replace(samples, "^[tT].*", "control")) %>%
+    group_by(OTU, samples) %>%
+    summarize(max = max(reads)) %>%
+    ungroup() %>%
+    group_by(OTU) %>%
+    filter(max >= max(max) & max > 0) %>%
+    filter(samples == "control") %>%
+    ungroup() %>%
+    select(OTU) %>%
+    pull() -> my_contaminants
+        
+ 
+read_tsv(input) %>%
+    filter(! OTU %in% my_contaminants) %>%
+    filter(! grepl("No_hit|Chloroplast|Mitochondria", taxonomy)) %>%
+    select(starts_with("YY"), OTU) %>%
+    gather(key = "samples", value = "reads", -OTU) %>%
+    group_by(samples) %>%
+    filter(sum(reads) >= min_sample_size) %>%
+    ungroup() %>%
+    separate(samples, c("samples", "lib_number"), sep = "_") %>%  # 'YYM1-aT_S1' -> 'YYM1-aT' 'S1'
+    separate(samples, c("plots", "replicates"), sep = "-") %>%  # 'YYM1-aT' -> 'YYM1' 'aT' (field name and plant id + compartment)
+    mutate(compartments = str_replace(replicates, "[[:lower:]]", "")) %>%  # 'aT' -> 'T' (compartment)
+    mutate(replicates = str_replace(replicates, "[[:upper:]]", "")) %>%  # 'aT' -> 'a' (plant id)
+    mutate(replicates = str_to_upper(replicates)) %>%
+    unite(plots, compartments, col = "samples", sep = "-") %>%  # 'YYM1' + 'T' -> 'YYM1-T'
+  filter(str_detect(samples,"T$")) %>% 
+  mutate(samples= str_replace(samples,"T$","")) %>% 
+    count(OTU, samples, replicates, wt = reads) %>%  # merge samples with the same names
+    group_by(OTU, samples) %>%
+    mutate(n_replicates = n())  %>%  # calculate the number of plant per field
+    filter(n > 0) %>%  # remove the OTU with 0 read per field
+    mutate(n_occur = n()) %>%  # calculate the number of plant positive  per field for each OTU
+    ungroup()  %>%
+    mutate(ratio= n_occur/n_replicates) %>%  # calculate the prevalence for each OTU in each field 
+    separate(samples, c("plots", "compartments"), sep = "-") %>%  # separate column sample into two columns : field and plant compartment
+    unite(plots, replicates, col = "samples", sep = "-") %>%  # rewrite the initial sample name
+    unite(samples, compartments, col = "samples", sep = "") %>%
+   # unite(samples, lib_number, col = "samples", sep = "_") %>%
+    mutate(removed_otu = replace(n_occur, which(ratio <= 0.5), 0)) %>%  # filter OTU presents in more than 50% of sample at the field level 1/3
+    mutate(removed_otu = replace(removed_otu, which(ratio > 0.5), 1)) %>%  # filter OTU presents in more than 50% of sample at the field level 2/3
+    mutate(reads= removed_otu * n) %>%  # filter OTU presents in more than 50% of sample at the field level 3/3
+    distinct(OTU, samples, reads) %>%  # extract only OTU samples and reads columns
+    group_by(samples) %>%
+    filter(sum(reads) >= min_sample_size)%>%  # some samples are now below our threshold
+    ungroup() %>%
+    group_by(OTU) %>% 
+    filter(sum(reads) >= 1) %>% # remove OTU with 0 reads
+    ungroup() %>%
+    spread(samples, reads) %>%  # redo the otu table after "denoising"
+    replace(is.na(.), 0) %>%  # replace Na by 0
+    rename(OTU_ID = OTU) -> otu_data_tige
+ 
+#its racine
+read_tsv(input) %>%
+     filter(! OTU %in% my_contaminants) %>%
+    filter(! grepl("No_hit|Chloroplast|Mitochondria", taxonomy)) %>%
+    select(starts_with("YY"), OTU) %>%
+    gather(key = "samples", value = "reads", -OTU) %>%
+    group_by(samples) %>%
+    filter(sum(reads) >= min_sample_size) %>%
+    ungroup() %>%
+    separate(samples, c("samples", "lib_number"), sep = "_") %>%  # 'YYM1-aT_S1' -> 'YYM1-aT' 'S1'
+    separate(samples, c("plots", "replicates"), sep = "-") %>%  # 'YYM1-aT' -> 'YYM1' 'aT' (field name and plant id + compartment)
+    mutate(compartments = str_replace(replicates, "[[:lower:]]", "")) %>%  # 'aT' -> 'T' (compartment)
+    mutate(replicates = str_replace(replicates, "[[:upper:]]", "")) %>%  # 'aT' -> 'a' (plant id)
+    mutate(replicates = str_to_upper(replicates)) %>%
+    unite(plots, compartments, col = "samples", sep = "-") %>%  # 'YYM1' + 'T' -> 'YYM1-T'
+  filter(str_detect(samples,"R$")) %>% 
+  mutate(samples= str_replace(samples,"R$","")) %>% 
+    count(OTU, samples, replicates, wt = reads) %>%  # merge samples with the same names
+    group_by(OTU, samples) %>%
+    mutate(n_replicates = n())  %>%  # calculate the number of plant per field
+    filter(n > 0) %>%  # remove the OTU with 0 read per field
+    mutate(n_occur = n()) %>%  # calculate the number of plant positive  per field for each OTU
+    ungroup()  %>%
+    mutate(ratio= n_occur/n_replicates) %>%  # calculate the prevalence for each OTU in each field 
+    separate(samples, c("plots", "compartments"), sep = "-") %>%  # separate column sample into two columns : field and plant compartment
+    unite(plots, replicates, col = "samples", sep = "-") %>%  # rewrite the initial sample name
+    unite(samples, compartments, col = "samples", sep = "") %>%
+   # unite(samples, lib_number, col = "samples", sep = "_") %>%
+    mutate(removed_otu = replace(n_occur, which(ratio <= 0.5), 0)) %>%  # filter OTU presents in more than 50% of sample at the field level 1/3
+    mutate(removed_otu = replace(removed_otu, which(ratio > 0.5), 1)) %>%  # filter OTU presents in more than 50% of sample at the field level 2/3
+    mutate(reads= removed_otu * n) %>%  # filter OTU presents in more than 50% of sample at the field level 3/3
+    distinct(OTU, samples, reads) %>%  # extract only OTU samples and reads columns
+    group_by(samples) %>%
+    filter(sum(reads) >= min_sample_size)%>%  # some samples are now below our threshold
+    ungroup() %>%
+    group_by(OTU) %>% 
+    filter(sum(reads) >= 1) %>% # remove OTU with 0 reads
+    ungroup() %>%
+    spread(samples, reads) %>%  # redo the otu table after "denoising"
+    replace(is.na(.), 0) %>%  # replace Na by 0
+    rename(OTU_ID = OTU) -> otu_data_rac
+
+####its complet
+read_tsv(input) %>%
+     filter(! OTU %in% my_contaminants) %>%
+    filter(! grepl("No_hit|Chloroplast|Mitochondria", taxonomy)) %>%
+    select(starts_with("YY"), OTU) %>%
+    gather(key = "samples", value = "reads", -OTU) %>%
+    group_by(samples) %>%
+    filter(sum(reads) >= min_sample_size) %>%
+    ungroup() %>%
+    separate(samples, c("samples", "lib_number"), sep = "_") %>%  # 'YYM1-aT_S1' -> 'YYM1-aT' 'S1'
+    separate(samples, c("plots", "replicates"), sep = "-") %>%  # 'YYM1-aT' -> 'YYM1' 'aT' (field name and plant id + compartment)
+    mutate(compartments = str_replace(replicates, "[[:lower:]]", "")) %>%  # 'aT' -> 'T' (compartment)
+    mutate(replicates = str_replace(replicates, "[[:upper:]]", "")) %>%  # 'aT' -> 'a' (plant id)
+    mutate(replicates = str_to_upper(replicates)) %>%
+    unite(plots, compartments, col = "samples", sep = "-") %>%  # 'YYM1' + 'T' -> 'YYM1-T'
+    count(OTU, samples, replicates, wt = reads) %>%  # merge samples with the same names
+    group_by(OTU, samples) %>%
+    mutate(n_replicates = n())  %>%  # calculate the number of plant per field
+    filter(n > 0) %>%  # remove the OTU with 0 read per field
+    mutate(n_occur = n()) %>%  # calculate the number of plant positive  per field for each OTU
+    ungroup()  %>%
+    mutate(ratio= n_occur/n_replicates) %>%  # calculate the prevalence for each OTU in each field 
+    separate(samples, c("plots", "compartments"), sep = "-") %>%  # separate column sample into two columns : field and plant compartment
+    unite(plots, replicates, col = "samples", sep = "-") %>%  # rewrite the initial sample name
+    unite(samples, compartments, col = "samples", sep = "") %>%
+   # unite(samples, lib_number, col = "samples", sep = "_") %>%
+    mutate(removed_otu = replace(n_occur, which(ratio <= 0.5), 0)) %>%  # filter OTU presents in more than 50% of sample at the field level 1/3
+    mutate(removed_otu = replace(removed_otu, which(ratio > 0.5), 1)) %>%  # filter OTU presents in more than 50% of sample at the field level 2/3
+    mutate(reads= removed_otu * n) %>%  # filter OTU presents in more than 50% of sample at the field level 3/3
+    distinct(OTU, samples, reads) %>%  # extract only OTU samples and reads columns
+    group_by(samples) %>%
+    filter(sum(reads) >= min_sample_size)%>%  # some samples are now below our threshold
+    ungroup() %>%
+    group_by(OTU) %>% 
+    filter(sum(reads) >= 1) %>% # remove OTU with 0 reads
+    ungroup() %>%
+    spread(samples, reads) %>%  # redo the otu table after "denoising"
+    replace(is.na(.), 0) %>%  # replace Na by 0
+    rename(OTU_ID = OTU) -> otu_data
+
+#tax table
+
+read_tsv(input) %>%
+    select(OTU, taxonomy) %>%
+    separate(taxonomy, taxonomic_levels,
+             sep = "[|]", fill = "right", extra = "drop") %>%
+    mutate_if(is.character,
+              funs(str_replace(.,
+                               "unknown|uncultured|unidentified|\\*",
+                               replacement = NA_character_))) %>%
+    rename(OTU_ID = OTU) %>% 
+  semi_join(otu_data, by = "OTU_ID")->tax_data
+tax_data %>% 
+    semi_join(otu_data_rac, by = "OTU_ID") -> tax_data_rac  # keep only OTU present in otu_data
+tax_data %>% 
+    semi_join(otu_data_tige, by = "OTU_ID") -> tax_data_tige
+
+#metadata
+
+read_tsv(metadata) %>%
+    filter(! str_detect(genotype, "outlier|Japonica")) %>% 
+    filter(! str_detect(field, "T4")) %>% 
+    filter(!str_detect(genotype_group, "unknown")) %>%
+    separate(SampleID, c("SampleID", "lib_number"), sep = "_")%>%
+    mutate(SampleID = str_to_upper(SampleID)) -> sample_data 
+sample_data[!duplicated(sample_data$SampleID),]->sample_data
+sample_data%>% 
+  filter(str_detect(SampleID,"T$")) %>% 
+  mutate(SampleID= str_replace(SampleID,"T$",""))->sample_data_tige
+sample_data%>% 
+  filter(str_detect(SampleID,"R$")) %>% 
+  mutate(SampleID= str_replace(SampleID,"R$",""))->sample_data_rac
+
+```
+export otu table
+```{r}
+otu_data %>% 
+  inner_join(tax_data,by="OTU_ID") %>% 
+  write.csv(file = "fungal_communities_otu_table.csv")
+
+```
+
+make  Phyloseq objects
+
+```{r message=FALSE, warning=FALSE, include=FALSE, paged.print=FALSE}
+tree <- "seq.newick"
+read_tree(tree) ->tree
+
+## its 
+otu_data %>% 
+  mutate(OTU_ID=as.character(OTU_ID)) %>%
+  column_to_rownames(var = "OTU_ID") %>% 
+  as.matrix() -> otu
+
+tax_data %>% 
+  mutate(OTU_ID=as.character(OTU_ID)) %>%
+  column_to_rownames(var = "OTU_ID") %>% 
+  select(-Kingdom) %>% 
+  as.matrix()->tax
+
+rownames(sample_data) <- sample_data$SampleID
+object_phylo.its <- phyloseq(otu_table(otu, taxa_are_rows = TRUE), tax_table(tax), sample_data(sample_data))
+phy_tree(object_phylo.its) <- tree
+## rarefaction
+phylo_rare.its = rarefy_even_depth(object_phylo.its)
+
+
+##### its stems
+ otu_data_tige %>% 
+  mutate(OTU_ID=as.character(OTU_ID)) %>%
+  column_to_rownames(var = "OTU_ID") %>% 
+  as.matrix() -> otu_tige
+
+tax_data_tige %>% 
+  mutate(OTU_ID=as.character(OTU_ID)) %>%
+  column_to_rownames(var = "OTU_ID") %>% 
+  select(-Kingdom) %>% 
+  as.matrix()->tax_tige
+
+sample_data_tige %>% 
+  column_to_rownames(var = "SampleID")->sample_data_tige
+
+object_phylo.its_tige <- phyloseq(otu_table(otu_tige, taxa_are_rows = TRUE), tax_table(tax_tige), sample_data(sample_data_tige))
+phy_tree(object_phylo.its_tige) <- tree
+## rarefaction
+phylo_rare.its_tige = rarefy_even_depth(object_phylo.its_tige)
+
+##### its roots
+
+ otu_data_rac %>% 
+  mutate(OTU_ID=as.character(OTU_ID)) %>%
+  column_to_rownames(var = "OTU_ID") %>% 
+  as.matrix() -> otu_rac
+
+tax_data_rac %>% 
+  mutate(OTU_ID=as.character(OTU_ID)) %>%
+  column_to_rownames(var = "OTU_ID") %>% 
+  select(-Kingdom) %>% 
+  as.matrix()->tax_rac
+
+sample_data_rac %>% 
+  column_to_rownames(var = "SampleID")->sample_data_rac
+
+object_phylo.its_rac <- phyloseq(otu_table(otu_rac, taxa_are_rows = TRUE), tax_table(tax_rac), sample_data(sample_data_rac))
+phy_tree(object_phylo.its_rac) <- tree
+## rarefaction
+phylo_rare.its_rac = rarefy_even_depth(object_phylo.its_rac)
+```
+
+
+
+
+I) **alpha diversity with phyloseq**
+----------------------------------------
+
+- 1 bacterial community stem (alpha diversity)
+-----------------------------------------------
+**diversité alpha k=3** 
+```{r echo=FALSE, message=FALSE, warning=FALSE, paged.print=FALSE}
+
+p <- plot_richness(phylo_rare.its_tige, x="genotype_group", color="genotype_group", measures=c("Observed","Shannon"), nrow = 1)+   
+  scale_color_manual(values=c("#099A4D","#8D4725"), name="Rice genotype group")
+
+
+## Alpha-div Stats 
+
+p$data %>% 
+  filter(grepl("Shannon", variable))->shannon_result
+p$data %>% 
+  filter(grepl("Observed", variable)) %>%
+  rename(Observed=value ) %>% 
+  select(lib_number,Observed) %>% 
+  inner_join(shannon_result, by="lib_number") %>% 
+  rename(Shannon=value) %>% 
+  select(-variable)->alpha_div_result
+
+anova_result_obs<-aov(Observed ~ group_modern_landraces, data=alpha_div_result)
+anova_result_shan<-aov( Shannon~ group_modern_landraces, data=alpha_div_result)
+
+tukey_result_obs<- HSD.test(anova_result_obs, "group_modern_landraces", group=TRUE,alpha=0.05) 
+print(tukey_result_obs)
+
+tukey_result_shan<- HSD.test(anova_result_shan, "group_modern_landraces", group=TRUE,alpha=0.05) 
+print(tukey_result_shan)
+
+# PLOT alpha diversity
+ p$data %>%
+        group_by(variable,group_modern_landraces) %>%
+        summarize(max = max(value)) %>%
+        mutate(max= max*1.1) %>% 
+        unite(variable,group_modern_landraces , col = "key", sep = "_")->label
+
+tukey_result_shan$groups %>%
+  rownames_to_column(var="group_modern_landraces") %>% 
+  mutate(variable = str_replace(groups, ".", "Shannon")) %>% 
+  rename(value=Shannon)->stat_group
+
+tukey_result_obs$groups %>%
+  rownames_to_column(var="group_modern_landraces") %>% 
+  mutate(variable = str_replace(groups, ".", "Observed")) %>%
+  rename(value=Observed) %>% 
+  bind_rows(stat_group) %>% 
+  unite(variable,group_modern_landraces , col = "key", sep = "_", remove = FALSE) %>% 
+  inner_join(label) %>% 
+  select(-key,-value) %>% 
+  rename(value=max) ->stat_group
+
+ggplot(p$data, aes(x = group_modern_landraces, y = value,colour=group_modern_landraces,shape=group_modern_landraces)) +
+      geom_violin() +
+      facet_grid(variable ~ tissu,drop=T,scale="free",space="fixed") +
+  geom_jitter(shape=16, position=position_jitter(0.2)) +
+  ylab("Diversity index")  + xlab(NULL) + theme_bw() +  theme(axis.text=element_text(size=14),axis.title=element_text(size=14,face="bold")) +   
+     scale_color_manual(values=c("#099A4D","#8D4725"), name="Rice genotype group")+
+      geom_text(data = stat_group, aes(x = group_modern_landraces, y = value, label = groups), nudge_y = 0.5,
+    size = 5,
+    hjust = 0.5,
+    color = "black")
+ggsave('Rice_stems_fungal_communities_alpha_div_K3.pdf')
+```
+
+** alpha diversity k=8** 
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, paged.print=FALSE}
+
+
+p <- plot_richness(phylo_rare.its_tige, x="K8", color="K8", measures=c("Observed","Shannon"), nrow = 1)+   
+  scale_color_manual(values=c("#F8993A","#0F9D48","#562D99","#794FA0","#8C4720","#929336"), name="Rice genotype group K=8")
+
+
+
+
+## Alpha-div Stats 
+# genotype
+p$data %>% 
+  filter(grepl("Shannon", variable))->shannon_result
+p$data %>% 
+  filter(grepl("Observed", variable)) %>%
+  rename(Observed=value ) %>% 
+  select(lib_number,Observed) %>% 
+  inner_join(shannon_result, by="lib_number") %>% 
+  rename(Shannon=value) %>% 
+  select(-variable)->alpha_div_result
+
+anova_result_obs<-aov(Observed ~ K8, data=alpha_div_result)
+anova_result_shan<-aov( Shannon~ K8, data=alpha_div_result)
+
+tukey_result_obs<- HSD.test(anova_result_obs, "K8", group=TRUE,alpha=0.05) 
+print(tukey_result_obs)
+tukey_result_shan<- HSD.test(anova_result_shan, "K8", group=TRUE,alpha=0.05) 
+print(tukey_result_shan)
+# PLOT alpha diversity
+ p$data %>%
+        group_by(variable,K8) %>%
+        summarize(max = max(value)) %>%
+        mutate(max= max*1.1) %>% 
+        unite(variable,K8 , col = "key", sep = "_")->label
+
+tukey_result_shan$groups %>%
+  rownames_to_column(var="K8") %>% 
+  mutate(variable = str_replace(groups, ".*", "Shannon")) %>% 
+  rename(value=Shannon)->stat_group
+
+tukey_result_obs$groups %>%
+  rownames_to_column(var="K8") %>% 
+  mutate(variable = str_replace(groups, ".*", "Observed")) %>%
+  rename(value=Observed) %>% 
+  bind_rows(stat_group) %>% 
+  unite(variable,K8 , col = "key", sep = "_", remove = FALSE) %>% 
+  inner_join(label) %>% 
+  select(-key,-value) %>% 
+  rename(value=max) ->stat_group
+
+ggplot(p$data, aes(x = K8, y = value,colour=K8,shape=K8)) +
+      geom_violin() +
+      facet_grid(variable ~ tissu,drop=T,scale="free",space="fixed") +
+  geom_jitter(shape=16, position=position_jitter(0.2)) +
+  ylab("Diversity index")  + xlab(NULL) + theme_bw() +   theme(axis.text.x = element_text(face="bold", 
+                           size=10, angle=90),
+          axis.text.y = element_text(face="bold", 
+                           size=10)) +   
+     scale_color_manual(values=c("#F8993A","#0F9D48","#562D99","#794FA0","#8C4720","#929336"), name="Rice genotype group")+
+      geom_text(data = stat_group, aes(x = K8, y = value, label = groups), nudge_y = 0.5,
+    size = 4,
+    hjust = 0.5,
+    color = "black")
+
+ggsave('Rice_stems_fungal_communities_alpha_div_K8.pdf')
+```
+
+
+- 1 fungal community root (alpha diversity)
+-----------------------------------------------
+
+** alpha diversity k=3** 
+```{r echo=FALSE, message=FALSE, warning=FALSE, paged.print=FALSE}
+#####diversité alpha 
+
+p <- plot_richness(phylo_rare.its_rac, x="genotype_group", color="genotype_group", measures=c("Observed","Shannon"), nrow = 1)+   
+  scale_color_manual(values=c("#099A4D","#8D4725"), name="Rice genotype group")
+
+
+## Alpha-div Stats 
+
+p$data %>% 
+  filter(grepl("Shannon", variable))->shannon_result
+p$data %>% 
+  filter(grepl("Observed", variable)) %>%
+  rename(Observed=value ) %>% 
+  select(lib_number,Observed) %>% 
+  inner_join(shannon_result, by="lib_number") %>% 
+  rename(Shannon=value) %>% 
+  select(-variable)->alpha_div_result
+
+anova_result_obs<-aov(Observed ~ group_modern_landraces, data=alpha_div_result)
+anova_result_shan<-aov( Shannon~ group_modern_landraces, data=alpha_div_result)
+
+tukey_result_obs<- HSD.test(anova_result_obs, "group_modern_landraces", group=TRUE,alpha=0.05) 
+print(tukey_result_obs)
+
+tukey_result_shan<- HSD.test(anova_result_shan, "group_modern_landraces", group=TRUE,alpha=0.05) 
+print(tukey_result_shan)
+
+# PLOT alpha diversity
+ p$data %>%
+        group_by(variable,group_modern_landraces) %>%
+        summarize(max = max(value)) %>%
+        mutate(max= max*1.1) %>% 
+        unite(variable,group_modern_landraces , col = "key", sep = "_")->label
+
+tukey_result_shan$groups %>%
+  rownames_to_column(var="group_modern_landraces") %>% 
+  mutate(variable = str_replace(groups, ".", "Shannon")) %>% 
+  rename(value=Shannon)->stat_group
+
+tukey_result_obs$groups %>%
+  rownames_to_column(var="group_modern_landraces") %>% 
+  mutate(variable = str_replace(groups, ".", "Observed")) %>%
+  rename(value=Observed) %>% 
+  bind_rows(stat_group) %>% 
+  unite(variable,group_modern_landraces , col = "key", sep = "_", remove = FALSE) %>% 
+  inner_join(label) %>% 
+  select(-key,-value) %>% 
+  rename(value=max) ->stat_group
+
+ggplot(p$data, aes(x = group_modern_landraces, y = value,colour=group_modern_landraces,shape=group_modern_landraces)) +
+      geom_violin() +
+      facet_grid(variable ~ tissu,drop=T,scale="free",space="fixed") +
+  geom_jitter(shape=16, position=position_jitter(0.2)) +
+  ylab("Diversity index")  + xlab(NULL) + theme_bw() +  theme(axis.text=element_text(size=14),axis.title=element_text(size=14,face="bold")) +   
+     scale_color_manual(values=c("#099A4D","#8D4725"), name="Rice genotype group")+
+      geom_text(data = stat_group, aes(x = group_modern_landraces, y = value, label = groups), nudge_y = 0.5,
+    size = 5,
+    hjust = 0.5,
+    color = "black")
+ggsave('Rice_roots_fungal_communities_alpha_div_K3.pdf')
+```
+
+** alpha diversity k=8** 
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, paged.print=FALSE}
+#####diversité alpha 
+
+p <- plot_richness(phylo_rare.its_rac, x="K8", color="K8", measures=c("Observed","Shannon"), nrow = 1)+   
+  scale_color_manual(values=c("#F8993A","#0F9D48","#562D99","#794FA0","#8C4720","#929336"), name="Rice genotype group K=8")
+
+
+
+## Alpha-div Stats 
+#sur gennotype
+p$data %>% 
+  filter(grepl("Shannon", variable))->shannon_result
+p$data %>% 
+  filter(grepl("Observed", variable)) %>%
+  rename(Observed=value ) %>% 
+  select(lib_number,Observed) %>% 
+  inner_join(shannon_result, by="lib_number") %>% 
+  rename(Shannon=value) %>% 
+  select(-variable)->alpha_div_result
+
+anova_result_obs<-aov(Observed ~ K8, data=alpha_div_result)
+anova_result_shan<-aov( Shannon~ K8, data=alpha_div_result)
+
+tukey_result_obs<- HSD.test(anova_result_obs, "K8", group=TRUE,alpha=0.05) 
+print(tukey_result_obs)
+tukey_result_shan<- HSD.test(anova_result_shan, "K8", group=TRUE,alpha=0.05) 
+print(tukey_result_shan)
+
+# PLOT alpha diversity
+ p$data %>%
+        group_by(variable,K8) %>%
+        summarize(max = max(value)) %>%
+        mutate(max= max*1.1) %>% 
+        unite(variable,K8 , col = "key", sep = "_")->label
+
+tukey_result_shan$groups %>%
+  rownames_to_column(var="K8") %>% 
+  mutate(variable = str_replace(groups, ".*", "Shannon")) %>% 
+  rename(value=Shannon)->stat_group
+
+tukey_result_obs$groups %>%
+  rownames_to_column(var="K8") %>% 
+  mutate(variable = str_replace(groups, ".*", "Observed")) %>%
+  rename(value=Observed) %>% 
+  bind_rows(stat_group) %>% 
+  unite(variable,K8 , col = "key", sep = "_", remove = FALSE) %>% 
+  inner_join(label) %>% 
+  select(-key,-value) %>% 
+  rename(value=max) ->stat_group
+
+ggplot(p$data, aes(x = K8, y = value,colour=K8,shape=K8)) +
+      geom_violin() +
+      facet_grid(variable ~ tissu,drop=T,scale="free",space="fixed") +
+  geom_jitter(shape=16, position=position_jitter(0.2)) +
+  ylab("Diversity index")  + xlab(NULL) + theme_bw() +   theme(axis.text.x = element_text(face="bold", 
+                           size=10, angle=90),
+          axis.text.y = element_text(face="bold", 
+                           size=10)) +   
+     scale_color_manual(values=c("#F8993A","#0F9D48","#562D99","#794FA0","#8C4720","#929336"), name="Rice genotype group")+
+      geom_text(data = stat_group, aes(x = K8, y = value, label = groups), nudge_y = 0.5,
+    size = 4,
+    hjust = 0.5,
+    color = "black")
+
+ggsave('Rice_roots_fungal_communities_alpha_div_K8.pdf')
+
+```
+
+Unweighted  unifrac distance roots
+```{r echo=FALSE, message=FALSE, warning=FALSE, paged.print=FALSE}
+
+distance(phylo_rare.its_rac, method="unifrac", type="K8")->dist_rac
+
+ord <- ordinate(phylo_rare.its_rac,"PCoA",dist_rac)
+
+
+# PERMANOVA
+adonis(dist_rac ~ get_variable(phylo_rare.its_rac, "SRBSDV")
+       + get_variable(phylo_rare.its_rac, "altitude_group")
+       + get_variable(phylo_rare.its_rac, "K8"),permutations = 10000)$aov.tab
+
+
+plot_ordination(phylo_rare.its_rac, 
+                ord,
+                color = "K8", 
+                title = "Rice roots fungal communities : PCoA UniFrac" ) +   theme_bw()+ scale_color_manual(values=c("#F8993A", "#0F9D48","#562D99","#794FA0","#8C4720","#929336" ), name="Rice genotype group K8") + theme(text = element_text(size = 12)) + geom_point(size = 2) + geom_text(mapping = aes(label = field), size = 3, vjust = 1.5) 
+
+
+rownames_to_column(sample_data_rac,var="SampleID" )->sample_data2
+
+ord$vectors %>% 
+  as.data.frame() %>%
+  rownames_to_column(var="SampleID" ) %>% 
+  select(Axis.1,Axis.2,SampleID)-> ord2
+
+data.scores <- left_join(ord2, sample_data2, by = "SampleID")
+
+cent <- aggregate(cbind(Axis.1,Axis.2)~K8, data = data.scores, FUN = mean)
+seg <- merge(data.scores, setNames(cent, c("K8", "Axis.1.x", "Axis.2.x")),
+             by = "K8", sort = FALSE)
+
+output <-"Rice_roots_fungal_communities_PCoA_unifrac_centroid_K8.pdf"
+
+cPalette <- c("#F8993A", "#0F9D48","#562D99","#794FA0","#8C4720","#929336" )
+
+ggplot(data = data.scores, aes(x = Axis.1, y = Axis.2)) +
+  geom_segment(data = seg, mapping = aes(xend = Axis.1.x, yend = Axis.2.x, 
+                                         color = K8)) +
+  geom_point(aes(color = K8), size = 2) +
+  geom_point(data = cent, aes(color = K8), size = 10) +
+  theme_bw(base_size = 16) +
+  theme(legend.title = element_blank(),
+        legend.position = "bottom",
+        legend.text = element_text(size = 10),
+        aspect.ratio = 1) +
+  ggtitle("") +
+  scale_colour_manual(values = cPalette) +
+  coord_equal()
+
+width <- 9
+height <- 9
+
+ggsave(file = output, width = width , height = height)
+
+#pariwaise permanova
+
+otu_rac %>% 
+  t() %>% 
+  data.frame() %>% 
+  rownames_to_column(var="ID") %>% 
+  select(ID)->ID
+
+sample_data_rac %>% 
+  rownames_to_column(var="ID") %>% 
+  inner_join(ID) %>% 
+  column_to_rownames(var="ID") %>% 
+  select(K8)->condition
+  
+pairwise.adonis(dist_rac,condition$K8,sim.function = "vegdist", perm = 9999)->pairwise_permanova_roots_its_unwunifrac
+```
+
+Unweighed  unifrac distance stem
+```{r echo=FALSE, message=FALSE, warning=FALSE, paged.print=FALSE}
+
+distance(phylo_rare.its_tige, method="unifrac", type="K8")->dist_tige
+
+
+ord <- ordinate(phylo_rare.its_tige,"PCoA",dist_tige)
+
+# PERMANOVA
+adonis(dist_tige ~ get_variable(phylo_rare.its_tige, "SRBSDV")
+       + get_variable(phylo_rare.its_tige, "altitude_group")
+       + get_variable(phylo_rare.its_tige, "K8"),permutations = 10000)$aov.tab
+
+
+plot_ordination(phylo_rare.its_tige, 
+                ord,
+                color = "K8", 
+                title = "Rice stems fungal communities : PCoA UniFrac K8" ) + 
+theme_bw()+ scale_color_manual(values=c("#F8993A", "#0F9D48","#562D99","#794FA0","#8C4720","#929336" ), name="Rice genotype group K8") + theme(text = element_text(size = 12)) + geom_point(size = 2) + geom_text(mapping = aes(label = field), size = 3, vjust = 1.5)  
+
+
+rownames_to_column(sample_data_rac,var="SampleID" )->sample_data2
+
+ord$vectors %>% 
+  as.data.frame() %>%
+  rownames_to_column(var="SampleID" ) %>% 
+  select(Axis.1,Axis.2,SampleID)-> ord2
+
+data.scores <- left_join(ord2, sample_data2, by = "SampleID")
+
+cent <- aggregate(cbind(Axis.1,Axis.2)~K8, data = data.scores, FUN = mean)
+seg <- merge(data.scores, setNames(cent, c("K8", "Axis.1.x", "Axis.2.x")),
+             by = "K8", sort = FALSE)
+
+output <-"Rice_stems_fungal_communities_PCoA_unifrac_centroid_k8.pdf"
+
+cPalette <- c("#F8993A","#0F9D48","#562D99","#794FA0","#8C4720","#929336")
+
+ggplot(data = data.scores, aes(x = Axis.1, y = Axis.2)) +
+  geom_segment(data = seg, mapping = aes(xend = Axis.1.x, yend = Axis.2.x, 
+                                         color = K8)) +
+  geom_point(aes(color = K8), size = 2) +
+  geom_point(data = cent, aes(color = K8), size = 10) +
+  theme_bw(base_size = 16) +
+  theme(legend.title = element_blank(),
+        legend.position = "bottom",
+        legend.text = element_text(size = 10),
+        aspect.ratio = 1) +
+  ggtitle("") +
+  scale_colour_manual(values = cPalette) +
+  coord_equal()
+
+width <- 9
+height <- 9
+
+ggsave(file = output, width = width , height = height)
+
+
+#pariwaise permanova
+
+otu_tige %>% 
+  t() %>% 
+  data.frame() %>% 
+  rownames_to_column(var="ID") %>% 
+  select(ID)->ID
+
+sample_data_tige %>% 
+  rownames_to_column(var="ID") %>% 
+  inner_join(ID) %>% 
+  column_to_rownames(var="ID") %>% 
+  select(K8)->condition
+  
+pairwise.adonis(dist_tige,condition$K8,sim.function = "vegdist", perm = 9999)->pairwise_permanova_stems_its_unwunifrac
+```
+
+Permanova SRBSDV factor k=8 (root and stem)
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, paged.print=FALSE}
+# PERMANOVA
+adonis(dist_rac ~ get_variable(phylo_rare.its_rac, "altitude_group")
+       + get_variable(phylo_rare.its_rac, "K8")
+       + get_variable(phylo_rare.its_rac, "SRBSDV"),permutations = 10000)$aov.tab
+# PERMANOVA
+adonis(dist_tige ~ get_variable(phylo_rare.its_tige, "altitude_group")
+       + get_variable(phylo_rare.its_tige, "K8")
+       + get_variable(phylo_rare.its_tige, "SRBSDV"),permutations = 10000)$aov.tab
+```
+
+
+
+Weighted unifrac distance roots  permanova and PcoA
+```{r echo=FALSE, message=FALSE, warning=FALSE, paged.print=FALSE}
+
+distance(phylo_rare.its_rac, method="wunifrac", type="K8")->dist_rac
+
+
+ord <- ordinate(phylo_rare.its_rac,"PCoA",dist_rac)
+
+
+# PERMANOVA
+adonis(dist_rac ~ get_variable(phylo_rare.its_rac, "altitude_group")
+       + get_variable(phylo_rare.its_rac, "SRBSDV")
+       + get_variable(phylo_rare.its_rac, "K8"),permutations = 10000)$aov.tab
+
+plot_ordination(phylo_rare.its_rac, 
+                ord,
+                color = "K8", 
+                title = "Rice roots fungal communities : PCoA weighted UniFrac K8" ) + 
+  theme_bw()+ scale_color_manual(values=c("#F8993A", "#0F9D48","#562D99","#794FA0","#8C4720","#929336"), name="Rice genotype group K8") + theme(text = element_text(size = 12)) + geom_point(size = 2) + geom_text(mapping = aes(label = field), size = 3, vjust = 1.5)
+
+
+rownames_to_column(sample_data_rac,var="SampleID" )->sample_data2
+
+ord$vectors %>% 
+  as.data.frame() %>%
+  rownames_to_column(var="SampleID" ) %>% 
+  select(Axis.1,Axis.2,SampleID)-> ord2
+
+data.scores <- left_join(ord2, sample_data2, by = "SampleID")
+
+cent <- aggregate(cbind(Axis.1,Axis.2)~K8, data = data.scores, FUN = mean)
+seg <- merge(data.scores, setNames(cent, c("K8", "Axis.1.x", "Axis.2.x")),
+             by = "K8", sort = FALSE)
+
+output <-"Rice_roots_fungal_communities_PCoA_weighted_unifrac_centroid_K8.pdf"
+
+cPalette <- c("#F8993A", "#0F9D48","#562D99","#794FA0","#8C4720","#929336" ) 
+
+ggplot(data = data.scores, aes(x = Axis.1, y = Axis.2)) +
+  geom_segment(data = seg, mapping = aes(xend = Axis.1.x, yend = Axis.2.x, 
+                                         color = K8)) +
+  geom_point(aes(color = K8), size = 2) +
+  geom_point(data = cent, aes(color = K8), size = 10) +
+  theme_bw(base_size = 16) +
+  theme(legend.title = element_blank(),
+        legend.position = "bottom",
+        legend.text = element_text(size = 10),
+        aspect.ratio = 1) +
+  ggtitle("") +
+  scale_colour_manual(values = cPalette) +
+  coord_equal()
+
+width <- 9
+height <- 9
+
+ggsave(file = output, width = width , height = height)
+
+#pariwaise permanova
+
+otu_rac %>% 
+  t() %>% 
+  data.frame() %>% 
+  rownames_to_column(var="ID") %>% 
+  select(ID)->ID
+
+sample_data_rac %>% 
+  rownames_to_column(var="ID") %>% 
+  inner_join(ID) %>% 
+  column_to_rownames(var="ID") %>% 
+  select(K8)->condition
+  
+pairwise.adonis(dist_rac,condition$K8,sim.function = "vegdist", perm = 9999)->pairwise_permanova_roots_its_wunifrac
+```
+
+Weighted unifrac distance stems  permanova and PcoA
+```{r echo=FALSE, message=FALSE, warning=FALSE, paged.print=FALSE}
+
+distance(phylo_rare.its_tige, method="wunifrac", type="K8")->dist_tige
+
+
+ord <- ordinate(phylo_rare.its_tige,"PCoA",dist_tige)
+
+# PERMANOVA
+adonis(dist_tige ~ get_variable(phylo_rare.its_tige, "altitude_group")
+       + get_variable(phylo_rare.its_tige, "SRBSDV")
+       + get_variable(phylo_rare.its_tige, "K8"),permutations = 10000)$aov.tab
+
+
+plot_ordination(phylo_rare.its_tige, 
+                ord,
+                color = "K8", 
+                title = "Rice stems fungal communities : PCoA weighted UniFrac" ) + 
+theme_bw()+ scale_color_manual(values=c("#F8993A", "#0F9D48","#562D99","#794FA0","#8C4720","#929336" ), name="Rice genotype group K8") + theme(text = element_text(size = 12)) + geom_point(size = 2) + geom_text(mapping = aes(label = field), size = 3, vjust = 1.5) 
+
+
+rownames_to_column(sample_data_rac,var="SampleID" )->sample_data2
+
+ord$vectors %>% 
+  as.data.frame() %>%
+  rownames_to_column(var="SampleID" ) %>% 
+  select(Axis.1,Axis.2,SampleID)-> ord2
+
+data.scores <- left_join(ord2, sample_data2, by = "SampleID")
+
+#{{creation of variable for spider/centroid representation}}
+cent <- aggregate(cbind(Axis.1,Axis.2)~K8, data = data.scores, FUN = mean)
+seg <- merge(data.scores, setNames(cent, c("K8", "Axis.1.x", "Axis.2.x")),
+             by = "K8", sort = FALSE)
+
+output <-"Rice_stems_fungal_communities_PCoA_weighted_unifrac_centroid_K8.pdf"
+
+cPalette <- c("#F8993A", "#0F9D48","#562D99","#794FA0","#8C4720","#929336" ) 
+
+ggplot(data = data.scores, aes(x = Axis.1, y = Axis.2)) +
+  geom_segment(data = seg, mapping = aes(xend = Axis.1.x, yend = Axis.2.x, 
+                                         color = K8)) +
+  geom_point(aes(color = K8), size = 2) +
+  #{{change geom_point for color}}
+  geom_point(data = cent, aes(color = K8), size = 10) +
+  #geom_text_repel(label = data.scores$field,
+  #alpha = 0.5,
+  #size = 2.75,
+  #segment.size = 0.25,
+  #segment.color = "grey",
+  #max.iter = 1000) +
+  theme_bw(base_size = 16) +
+  theme(legend.title = element_blank(),
+        legend.position = "bottom",
+        legend.text = element_text(size = 10),
+        aspect.ratio = 1) +
+  ggtitle("") +
+  #annotate("text", x = x_min+0.1, y = y_max, hjust = 0, label = stress_annotation) +
+  scale_colour_manual(values = cPalette) +
+  coord_equal()
+
+width <- 9
+height <- 9
+
+ggsave(file = output, width = width , height = height)
+
+#pariwaise permanova
+
+otu_tige %>% 
+  t() %>% 
+  data.frame() %>% 
+  rownames_to_column(var="ID") %>% 
+  select(ID)->ID
+
+sample_data_tige %>% 
+  rownames_to_column(var="ID") %>% 
+  inner_join(ID) %>% 
+  column_to_rownames(var="ID") %>% 
+  select(K8)->condition
+  
+pairwise.adonis(dist_tige,condition$K8,sim.function = "vegdist", perm = 9999)->pairwise_permanova_stem_its_wunifrac
+
+```
+
+Results pairwise permanova: create csv table
+```{r echo=FALSE, message=FALSE, warning=FALSE, paged.print=FALSE}
+pairwise_permanova_roots_16s_unwunifrac %>% 
+  select(-Df,-SumsOfSqs) %>% 
+  rename(F.Model_root_16s = F.Model) %>%
+  rename(R2_root_16s=R2) %>% 
+  rename(p.value_root_16s=p.value) %>% 
+  rename(p.adjusted_root_16s=p.adjusted) %>% 
+  rename(sig_root_16s=sig) %>% 
+  inner_join(pairwise_permanova_stems_16s_unwunifrac) %>% 
+  select(-Df,-SumsOfSqs) %>% 
+  rename(F.Model_stem_16s = F.Model) %>%
+  rename(R2_stem_16s=R2) %>% 
+  rename(p.value_stem_16s=p.value) %>% 
+  rename(p.adjusted_stem_16s=p.adjusted) %>% 
+  rename(sig_stem_16s=sig) %>%
+  inner_join(pairwise_permanova_roots_its_unwunifrac) %>% 
+  select(-Df,-SumsOfSqs) %>% 
+  rename(F.Model_root_its = F.Model) %>%
+  rename(R2_root_its=R2) %>% 
+  rename(p.value_root_its=p.value) %>% 
+  rename(p.adjusted_root_its=p.adjusted) %>% 
+  rename(sig_root_its=sig) %>%
+  inner_join(pairwise_permanova_stems_its_unwunifrac) %>% 
+    select(-Df,-SumsOfSqs) %>% 
+  rename(F.Model_stem_its = F.Model) %>%
+  rename(R2_stem_its=R2) %>% 
+  rename(p.value_stem_its=p.value) %>% 
+  rename(p.adjusted_stem_its=p.adjusted) %>% 
+  rename(sig_stem_its=sig)->result_pairwise_permanova
+
+write.csv(result_pairwise_permanova,file = "result_pairwise_permanova_unwunifrac.csv")
+
+
+
+pairwise_permanova_roots_16s_wunifrac %>% 
+  select(-Df,-SumsOfSqs) %>% 
+  rename(F.Model_root_16s = F.Model) %>%
+  rename(R2_root_16s=R2) %>% 
+  rename(p.value_root_16s=p.value) %>% 
+  rename(p.adjusted_root_16s=p.adjusted) %>% 
+  rename(sig_root_16s=sig) %>% 
+  inner_join(pairwise_permanova_stems_16s_wunifrac) %>% 
+  select(-Df,-SumsOfSqs) %>% 
+  rename(F.Model_stem_16s = F.Model) %>%
+  rename(R2_stem_16s=R2) %>% 
+  rename(p.value_stem_16s=p.value) %>% 
+  rename(p.adjusted_stem_16s=p.adjusted) %>% 
+  rename(sig_stem_16s=sig) %>%
+  inner_join(pairwise_permanova_roots_its_wunifrac) %>% 
+  select(-Df,-SumsOfSqs) %>% 
+  rename(F.Model_root_its = F.Model) %>%
+  rename(R2_root_its=R2) %>% 
+  rename(p.value_root_its=p.value) %>% 
+  rename(p.adjusted_root_its=p.adjusted) %>% 
+  rename(sig_root_its=sig) %>%
+  inner_join(pairwise_permanova_stem_its_wunifrac) %>% 
+    select(-Df,-SumsOfSqs) %>% 
+  rename(F.Model_stem_its = F.Model) %>%
+  rename(R2_stem_its=R2) %>% 
+  rename(p.value_stem_its=p.value) %>% 
+  rename(p.adjusted_stem_its=p.adjusted) %>% 
+  rename(sig_stem_its=sig)->result_pairwise_permanova
+
+write.csv(result_pairwise_permanova,file = "result_pairwise_permanova_wunifrac.csv")
+```
+
+
